@@ -23,9 +23,32 @@
 
 ## 安装方式
 
-发布包为未签名 `arm64` IPA：
-- **TrollStore（巨魔商店）**：直接导入安装即可。
-- **未越狱设备**：可使用 **Sideloadly / AltStore / SideStore / 爱思助手 / 自有证书** 重签名安装，或使用 Xcode 打开 `iosdm.xcodeproj` 登录 Apple ID 直接安装到设备。
+发布包为未签名 `arm64` IPA，推荐以下安装方案：
+
+### 方案一：LiveContainer + SideStore 稳定版（推荐，适合未越狱 iPhone / iPad）
+
+通过电脑端 **iLoader** 安装 **LiveContainer + SideStore 整合稳定版**，可突破免费 Apple ID 的应用数量限制并在设备本地完成签名与刷新：
+
+1. **电脑端安装 LiveContainer + SideStore 稳定版**
+   - 用数据线连接 iPhone / iPad 到电脑并在设备点击「信任此电脑」。
+   - 在电脑上打开 **iLoader**，登录 Apple ID 并选择安装 **LiveContainer + SideStore 稳定版**。
+   - 安装完成后，前往设备 **设置 -> 通用 -> VPN 与设备管理** 信任对应开发者证书，并在 **设置 -> 隐私与安全性 -> 开发者模式** 中开启开发者模式（按提示重启）。
+2. **安装并配置 LocalDevVPN（关键步骤）**
+   - 在 iPhone / iPad 上安装 **LocalDevVPN**。
+   - 打开 LocalDevVPN 设置，配置以下 IP 参数并保存启用：
+     - **通道 IP**：`10.7.0.0/24`
+     - **装置 IP**：`10.7.0.255/24`
+   - 保持设备连接 Wi-Fi，开启 **LocalDevVPN** 连接。
+3. **完成 SideStore / LiveContainer 初始化并导入 iosdm**
+   - 打开集成好的 **LiveContainer + SideStore**，在 SideStore 中登录与电脑端一致的 Apple ID，完成证书导入与刷新（Refresh）。
+   - 从 [Releases](https://github.com/amiamii1983/iosdm/releases) 下载对应安装包（iPad / 通用选 `iosdm.ipa`，iPhone 专用选 `iosdm-iPhone.ipa`），在 **LiveContainer** 中点击 `+` 导入 `.ipa` 即可运行。
+
+> **小提示（搭配小火箭下载国外网盘）**：iOS / iPadOS 同一时间仅能开启一个 VPN 配置。**LocalDevVPN** 仅在 SideStore 签名、刷新或首次配对时需要开启；刷新完毕后，打开 **iosdm** 下载国外网盘时，直接切回 **Shadowrocket（小火箭）** 并保持 iosdm 默认「自动代理」即可。
+
+### 方案二：其他安装方式
+
+- **TrollStore（巨魔商店）**：直接导入 `.ipa` 即可永久安装。
+- **其他侧载 / 自签工具**：可通过 **Sideloadly / AltStore / 爱思助手 / 自有证书** 重签名安装，或使用 Xcode 打开 `iosdm.xcodeproj` 登录 Apple ID 直接安装到设备。
 
 ## 本地编译打包
 
