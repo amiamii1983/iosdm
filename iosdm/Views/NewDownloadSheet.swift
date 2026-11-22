@@ -12,7 +12,7 @@ struct NewDownloadSheet: View {
     @State private var startImmediately = true
     @State private var taskProxyChoice: TaskProxyChoice = .followGlobal
 
-    @State private var showAdvancedHeaders = false
+    @State private var showAdvancedOptions = false
     @State private var userAgent = ""
     @State private var referer = ""
     @State private var cookie = ""
@@ -58,9 +58,9 @@ struct NewDownloadSheet: View {
                                 Image(systemName: "doc.on.clipboard.fill")
                                     .foregroundStyle(.blue)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("检测到剪贴板中有下载链接")
+                                    Text("粘贴剪贴板中的链接")
                                         .font(.subheadline.weight(.semibold))
-                                    Text("轻点此处快速填入 iosdm")
+                                    Text("轻点快速填入")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -76,7 +76,7 @@ struct NewDownloadSheet: View {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("下载链接 (HTTP / HTTPS / 国外网盘)")
+                            Text("下载链接")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -95,7 +95,7 @@ struct NewDownloadSheet: View {
                         }
 
                         CompatMultilineField(
-                            placeholder: "https://example.com/file.zip",
+                            placeholder: "输入 http:// 或 https:// 链接",
                             text: $urlText,
                             minLines: 2,
                             maxLines: 5
@@ -109,17 +109,17 @@ struct NewDownloadSheet: View {
                         }
 
                         if let provider = detectedProviderName {
-                            Label("已识别 \(provider) 链接，iosdm 将自动解析真实文件直链", systemImage: "icloud.and.arrow.down")
+                            Label("已识别 \(provider) 链接，将自动解析真实下载地址", systemImage: "icloud.and.arrow.down")
                                 .font(.caption)
                                 .foregroundStyle(.blue)
                         }
                     }
 
-                    TextField("自定义文件名（留空则自动获取）", text: $customFileName)
+                    TextField("文件名（留空则自动获取）", text: $customFileName)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                 } footer: {
-                    Text("支持 http / https 直链，以及 MediaFire、Google Drive、Dropbox、Pixeldrain、Gofile、OneDrive、GitHub 等国外热门网盘解析与断点续传。")
+                    Text("支持 http / https 直链，以及 MediaFire、Google Drive、Dropbox、Pixeldrain、Gofile、OneDrive、GitHub 等海外网盘。")
                 }
 
                 if let validationError {
@@ -130,48 +130,48 @@ struct NewDownloadSheet: View {
                     }
                 }
 
-                Section("下载参数") {
-                    Picker("分片线程数", selection: $threadCount) {
+                Section {
+                    Picker("下载线程", selection: $threadCount) {
                         ForEach(AppSettings.supportedThreadCounts, id: \.self) { count in
-                            Text("\(count) 线程").tag(count)
+                            Text(count == 4 ? "4 线程（推荐）" : "\(count) 线程").tag(count)
                         }
                     }
 
-                    Picker("网络代理", selection: $taskProxyChoice) {
-                        Text("跟随全局（\(settings.proxySettings.mode.shortTitle)）").tag(TaskProxyChoice.followGlobal)
-                        Text("自动（系统 / VPN）").tag(TaskProxyChoice.auto)
-                        Text("手动代理").tag(TaskProxyChoice.manual)
-                        Text("直连").tag(TaskProxyChoice.direct)
-                    }
-
-                    Toggle("添加后立即开始下载", isOn: $startImmediately)
+                    Toggle("立即开始下载", isOn: $startImmediately)
                 }
 
                 Section {
-                    DisclosureGroup("自定义请求头（防盗链 / 登录态）", isExpanded: $showAdvancedHeaders) {
-                        TextField("Referer（来源页 URL）", text: $referer)
+                    DisclosureGroup("高级选项（选填）", isExpanded: $showAdvancedOptions) {
+                        Picker("本任务代理", selection: $taskProxyChoice) {
+                            Text("跟随设置（\(settings.proxySettings.mode.shortTitle)）").tag(TaskProxyChoice.followGlobal)
+                            Text("自动（系统 / VPN）").tag(TaskProxyChoice.auto)
+                            Text("手动代理").tag(TaskProxyChoice.manual)
+                            Text("直接连接").tag(TaskProxyChoice.direct)
+                        }
+
+                        TextField("Referer（防盗链来源页）", text: $referer)
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                             .font(.footnote)
 
-                        TextField("Cookie", text: $cookie)
+                        TextField("Cookie（登录凭证）", text: $cookie)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                             .font(.footnote)
 
-                        TextField("User-Agent（留空使用标准浏览器 UA）", text: $userAgent)
+                        TextField("User-Agent（留空使用默认）", text: $userAgent)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                             .font(.footnote)
 
-                        TextField("Authorization（如 Bearer ...）", text: $authorization)
+                        TextField("Authorization（认证头）", text: $authorization)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                             .font(.footnote)
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("其他自定义 Header（每行一项，格式 Key: Value）")
+                            Text("其他请求头（每行一项：Key: Value）")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             CompatMultilineField(
@@ -196,7 +196,7 @@ struct NewDownloadSheet: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(startImmediately ? "开始下载" : "添加任务") {
+                    Button(startImmediately ? "开始下载" : "添加") {
                         submit()
                     }
                     .font(.body.weight(.semibold))

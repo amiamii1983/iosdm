@@ -12,9 +12,9 @@ enum ProxyMode: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var displayTitle: String {
         switch self {
-        case .auto: return "自动（系统 / VPN 代理）"
-        case .manual: return "手动代理"
-        case .direct: return "直连（不使用代理）"
+        case .auto: return "自动（推荐）"
+        case .manual: return "手动设置"
+        case .direct: return "直接连接"
         }
     }
 
@@ -29,11 +29,11 @@ enum ProxyMode: String, Codable, CaseIterable, Identifiable, Sendable {
     var descriptionText: String {
         switch self {
         case .auto:
-            return "自动跟随系统网络与 VPN 代理软件（如 Shadowrocket、Surge、Quantumult X、Loon、Clash 等）的分流规则，国内直连、国外走代理，互不影响。"
+            return "自动跟随系统与已开启的代理软件（如 Shadowrocket、Surge、Quantumult X、Loon、Clash 等），国内直连、国外加速，互不影响。"
         case .manual:
-            return "指定 HTTP/HTTPS 或 SOCKS5 代理地址，配合国内域名直连分流，不影响中国与国外网络下载。"
+            return "手动填写代理地址与端口；开启国内直连分流后，不影响中国和国外网络的下载速度。"
         case .direct:
-            return "忽略系统 HTTP 代理直接连接目标服务器，适合局域网或纯国内高速直连。"
+            return "不走代理直接下载，适合纯国内或局域网链接。"
         }
     }
 }
@@ -102,38 +102,25 @@ struct DetectedSystemProxyInfo: Equatable, Sendable {
     }
 
     var summaryTitle: String {
-        if hasActiveVPNTunnel && (primaryProxyHost != nil) {
-            return "已读取到系统 / VPN 代理"
+        if hasAnyProxyOrVPN {
+            return "已检测到系统 / VPN 代理"
         }
-        if hasActiveVPNTunnel {
-            return "已检测到 VPN 虚拟网卡分流接管"
-        }
-        if primaryProxyHost != nil || pacURL != nil {
-            return "已检测到系统网络代理"
-        }
-        return "当前未检测到代理（直连网络）"
+        return "当前为直连网络"
     }
 
     var detailLines: [String] {
         var lines: [String] = []
         if let h = httpProxyHost, let p = httpProxyPort {
-            lines.append("HTTP 代理：\(h):\(p)")
-        }
-        if let h = httpsProxyHost, let p = httpsProxyPort,
-           !(h == httpProxyHost && p == httpProxyPort) {
-            lines.append("HTTPS 代理：\(h):\(p)")
-        }
-        if let h = socksProxyHost, let p = socksProxyPort {
-            lines.append("SOCKS5 代理：\(h):\(p)")
-        }
-        if let pac = pacURL, !pac.isEmpty {
-            lines.append("PAC 自动配置：\(pac)")
+            lines.append("系统代理地址：\(h):\(p)")
+        } else if let h = httpsProxyHost, let p = httpsProxyPort {
+            lines.append("系统代理地址：\(h):\(p)")
+        } else if let h = socksProxyHost, let p = socksProxyPort {
+            lines.append("系统代理地址：\(h):\(p)")
         }
         if hasActiveVPNTunnel {
-            lines.append("虚拟网卡隧道：\(vpnInterfaces.joined(separator: ", "))")
-        }
-        if lines.isEmpty {
-            lines.append("未开启系统 HTTP/SOCKS 代理，也未检测到活跃 VPN 隧道。")
+            lines.append("已开启 VPN 分流，自动模式可直接生效。")
+        } else if lines.isEmpty {
+            lines.append("未检测到代理软件运行，将使用普通网络直接下载。")
         }
         return lines
     }

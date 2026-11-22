@@ -247,35 +247,8 @@ enum DeviceStorageText {
         isPad ? "我的 iPad" : "我的 iPhone"
     }
 
-    static func currentDirectorySummary(customFolderName: String?) -> String {
-        if let customFolderName, !customFolderName.isEmpty {
-            return "自选目录：\(customFolderName)"
-        }
-        if StoragePaths.isRunningInLiveContainer {
-            return "LiveContainer 应用数据目录（默认）"
-        }
-        return "「文件」App -> \(deviceContainerName) -> iosdm"
-    }
-
-    static func savedFileLocation(task: DownloadTaskModel) -> String {
-        let fileName = task.savedFileName ?? task.fileName
-        if task.savedInCustomDirectory, let folder = task.savedFolderDisplayName, !folder.isEmpty {
-            return "自选目录 / \(folder) / \(fileName)"
-        }
-        if StoragePaths.isRunningInLiveContainer {
-            return "LiveContainer 数据目录 / Documents / \(fileName)"
-        }
-        return "文件 App / \(deviceContainerName) / iosdm / \(fileName)"
-    }
-
-    static func emptyCompletedHint(customFolderName: String?) -> String {
-        if let customFolderName, !customFolderName.isEmpty {
-            return "下载完成的文件会显示在这里，并保存在您设置的「\(customFolderName)」文件夹中。"
-        }
-        if StoragePaths.isRunningInLiveContainer {
-            return "当前运行在 LiveContainer 内，可在设置中自选下载目录（如「\(deviceContainerName) / 下载」），方便直接查找文件。"
-        }
-        return "下载完成的文件会显示在这里，并同步出现在系统的「文件」App -> \(deviceContainerName) -> iosdm 中。"
+    static var emptyCompletedHint: String {
+        "下载完成的文件会显示在这里，点开即可预览、保存到「文件」App 或分享给其他应用。"
     }
 }
 

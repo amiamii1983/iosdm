@@ -1,64 +1,39 @@
 # iosdm
 
-轻量级原生 iOS / iPadOS 多线程断点续传下载器（纯 Swift / SwiftUI，支持 **iOS / iPadOS 15.0+** 到最新 **iPadOS 27.2.1**，无第三方重型依赖）。
+轻量、简洁的原生 iOS / iPadOS 多线程断点续传下载器（支持 **iOS / iPadOS 15.0+** 至最新系统）。
 
-## 主要特性
+## 功能特点
 
-- **HTTP / HTTPS 全协议直链下载**：支持 `https://` 与明文 `http://` 直链，自动处理 301/302 重定向、UTF-8 `Content-Disposition` 文件名解析与重名自动去重。
-- **多线程分片与断点续传**：支持 `1 / 2 / 4 / 8` 线程并发 `Range` 分片下载，使用 POSIX `pwrite` 按精确偏移直接落盘（无需完成后二次拷贝合并）；支持暂停/恢复、断流自动重试、App 重启恢复断点；遇到不支持 `Range` 的服务器自动降级为单线程下载。
-- **国外热门网盘直链解析**：内置 MediaFire（自动解析 `data-scrambled-url` 与失效直链回溯）、Google Drive（含大文件二次确认页）、Dropbox、Pixeldrain、Gofile、OneDrive、GitHub 解析，并具备防误下 `text/html` 网页保护。
-- **代理菜单与系统 / VPN 代理适配**：
-  - **自动模式**：自动读取并跟随系统网络与各类 VPN 代理软件（如 Shadowrocket、Surge、Quantumult X、Loon、Clash 等）的分流规则，中国网络与国外网络下载互不影响。
-  - **手动代理**：支持 HTTP/HTTPS 与 SOCKS5，内置国内域名与局域网直连分流开关及自定义绕过规则。
-  - **直连模式**：绕过系统 HTTP 代理直连。
-- **自定义下载目录 & LiveContainer 友好**：支持通过系统文件夹选择器自定义任意下载目录（如「我的 iPad / 下载」、iCloud 或外接存储），解决在 LiveContainer 中找不到应用目录的问题；外接目录暂不可用时自动安全回退默认目录。
-- **轻量低功耗 & 可选监视小窗**：空闲时零后台定时轮询、禁用 `URLCache`、低频刷新与落盘；提供极简下载监视悬浮小窗（**默认关闭**，可在设置中手动开启，仅下载时显示 `%` 与速度）。
-- **按需手动检查更新**：设置页提供「手动检查更新」按钮（平时 0 后台请求，走 GitHub Releases CDN 避免公共 IP 限流）。
-- **新旧设备全适配**：兼容旧款 iPhone / iPad（最低 `iOS / iPadOS 15.0`）以及新款 iPhone 窄屏与 iPadOS 27.2.1 宽屏双栏。
+- **HTTP / HTTPS 断点续传**：多线程分片加速、随时暂停恢复、重启不丢进度。
+- **海外网盘直链解析**：支持 MediaFire、Google Drive、Dropbox、Pixeldrain、Gofile、OneDrive、GitHub，自动拦截误下网页。
+- **代理与国内外分流**：支持自动跟随系统 / VPN 代理软件（Shadowrocket、Surge、Quantumult X、Loon、Clash 等），也支持手动配置 HTTP / SOCKS5 与国内直连分流。
+- **轻量省电 & 导出方便**：空闲零后台耗电；下载完成后可直接在 App 内预览、一键保存到「文件」App 或分享给其他应用。
 
-## 版本说明
+## 下载安装包
 
-在 [Releases](https://github.com/amiamii1983/iosdm/releases) 中同时提供两个无签名真机包（最低支持 `iOS / iPadOS 15.0`）：
-
-- `iosdm-iPhone.ipa`：iPhone 手机专用包（`UIDeviceFamily = [1]`）
-- `iosdm.ipa`：iPhone + iPadOS 通用包（`UIDeviceFamily = [1, 2]`）
+前往 [Releases](https://github.com/amiamii1983/iosdm/releases) 下载未签名 `.ipa`：
+- `iosdm-iPhone.ipa`：iPhone 手机专用版
+- `iosdm.ipa`：iPhone + iPad 通用版
 
 ## 安装方式
 
-发布包为未签名 `arm64` IPA，推荐以下安装方案：
+### 方式一：LiveContainer + SideStore 稳定版（推荐）
 
-### 方案一：LiveContainer + SideStore 稳定版（推荐，适合未越狱 iPhone / iPad）
+1. 电脑端用 **iLoader** 连接设备安装 **LiveContainer + SideStore 稳定版**，并在设备「设置 -> 通用 -> VPN 与设备管理」信任证书（按需开启开发者模式）。
+2. 设备安装 **LocalDevVPN**，配置并开启连接：
+   - **通道 IP**：`10.7.0.0/24`
+   - **装置 IP**：`10.7.0.255/24`
+3. 在 SideStore / LiveContainer 中完成登录与刷新后，导入 `iosdm.ipa` 或 `iosdm-iPhone.ipa` 即可使用。
+4. 刷新完毕后，下载国外网盘时切回常用代理软件并保持 iosdm 默认「自动代理」即可。
 
-通过电脑端 **iLoader** 安装 **LiveContainer + SideStore 整合稳定版**，可突破免费 Apple ID 的应用数量限制并在设备本地完成签名与刷新：
+### 方式二：其他方式
 
-1. **电脑端安装 LiveContainer + SideStore 稳定版**
-   - 用数据线连接 iPhone / iPad 到电脑并在设备点击「信任此电脑」。
-   - 在电脑上打开 **iLoader**，登录 Apple ID 并选择安装 **LiveContainer + SideStore 稳定版**。
-   - 安装完成后，前往设备 **设置 -> 通用 -> VPN 与设备管理** 信任对应开发者证书，并在 **设置 -> 隐私与安全性 -> 开发者模式** 中开启开发者模式（按提示重启）。
-2. **安装并配置 LocalDevVPN（关键步骤）**
-   - 在 iPhone / iPad 上安装 **LocalDevVPN**。
-   - 打开 LocalDevVPN 设置，配置以下 IP 参数并保存启用：
-     - **通道 IP**：`10.7.0.0/24`
-     - **装置 IP**：`10.7.0.255/24`
-   - 保持设备连接 Wi-Fi，开启 **LocalDevVPN** 连接。
-3. **完成 SideStore / LiveContainer 初始化并导入 iosdm**
-   - 打开集成好的 **LiveContainer + SideStore**，在 SideStore 中登录与电脑端一致的 Apple ID，完成证书导入与刷新（Refresh）。
-   - 从 [Releases](https://github.com/amiamii1983/iosdm/releases) 下载对应安装包（iPad / 通用选 `iosdm.ipa`，iPhone 专用选 `iosdm-iPhone.ipa`），在 **LiveContainer** 中点击 `+` 导入 `.ipa` 即可运行。
+- **TrollStore（巨魔商店）**：直接导入 `.ipa` 安装。
+- **其他工具**：使用 Sideloadly、AltStore、爱思助手或 Xcode 签名安装。
 
-> **实用提示**：
-> - **搭配 VPN / 代理软件下载国外网盘**：iOS / iPadOS 同一时间仅能开启一个 VPN 配置。**LocalDevVPN** 仅在 SideStore 签名、刷新或首次配对时需要开启；刷新完毕后，打开 **iosdm** 下载国外网盘时，直接切回您常用的代理软件（Shadowrocket / Surge / Quantumult X / Loon / Clash 等）并保持 iosdm 默认「自动代理」即可。
-> - **自定义下载目录与导出（更易找文件）**：在 LiveContainer 中运行默认保存于容器内部数据目录，可在 **iosdm 设置 -> 下载保存目录** 中点进具体子文件夹后点右上角「打开」设为默认目录；如 LiveContainer 限制了目录写入权限，可直接在已下载文件的详情页点击 **「另存到『文件』App」** 一键导出到「我的 iPad / 下载」等任意位置。
-
-### 方案二：其他安装方式
-
-- **TrollStore（巨魔商店，支持 iOS 15–17 等旧系统）**：直接导入 `.ipa` 即可永久安装。
-- **其他侧载 / 自签工具**：可通过 **Sideloadly / AltStore / 爱思助手 / 自有证书** 重签名安装，或使用 Xcode 打开 `iosdm.xcodeproj` 登录 Apple ID 直接安装到设备。
-
-## 本地编译打包
+## 本地构建
 
 ```bash
 chmod +x scripts/build_ipa.sh
 ./scripts/build_ipa.sh
 ```
-
-编译产物位于 `dist/iosdm.ipa`（通用版）、`dist/iosdm-iPhone.ipa`（iPhone 专用版）与 `dist/version.json`。

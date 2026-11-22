@@ -61,7 +61,7 @@ cat > "${DIST_DIR}/version.json" <<EOF
 {
   "version": "${VERSION_STR}",
   "build": 1,
-  "notes": "iosdm v${VERSION_STR}：支持 iOS/iPadOS 15.0+、自定义下载目录与另存到「文件」App、可选低功耗下载监视小窗、系统/VPN与手动代理分流及海外网盘直链解析。",
+  "notes": "iosdm v${VERSION_STR}：精简轻量版，支持 iOS/iPadOS 15.0+、多线程断点续传、海外网盘解析、自动/手动代理分流与一键保存到「文件」App。",
   "releaseURL": "https://github.com/amiamii1983/iosdm/releases/tag/${RELEASE_TAG}",
   "universalIPAURL": "https://github.com/amiamii1983/iosdm/releases/download/${RELEASE_TAG}/iosdm.ipa",
   "iPhoneIPAURL": "https://github.com/amiamii1983/iosdm/releases/download/${RELEASE_TAG}/iosdm-iPhone.ipa"

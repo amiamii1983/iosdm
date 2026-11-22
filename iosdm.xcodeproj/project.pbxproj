@@ -28,7 +28,6 @@
 		B00000000000000000000020 /* CloudLinkResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000020 /* CloudLinkResolver.swift */; };
 		B00000000000000000000021 /* ProxySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000021 /* ProxySettingsView.swift */; };
 		B00000000000000000000022 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000022 /* UpdateChecker.swift */; };
-		B00000000000000000000023 /* DownloadMonitorOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000023 /* DownloadMonitorOverlay.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -55,7 +54,6 @@
 		F00000000000000000000020 /* CloudLinkResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudLinkResolver.swift; sourceTree = "<group>"; };
 		F00000000000000000000021 /* ProxySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxySettingsView.swift; sourceTree = "<group>"; };
 		F00000000000000000000022 /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
-		F00000000000000000000023 /* DownloadMonitorOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadMonitorOverlay.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -144,7 +142,6 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000011 /* DocumentPreviewView.swift */,
-				F00000000000000000000023 /* DownloadMonitorOverlay.swift */,
 				F00000000000000000000012 /* DownloadRowView.swift */,
 				F00000000000000000000013 /* TaskDetailView.swift */,
 				F00000000000000000000014 /* NewDownloadSheet.swift */,
@@ -245,7 +242,6 @@
 				B00000000000000000000020 /* CloudLinkResolver.swift in Sources */,
 				B00000000000000000000021 /* ProxySettingsView.swift in Sources */,
 				B00000000000000000000022 /* UpdateChecker.swift in Sources */,
-				B00000000000000000000023 /* DownloadMonitorOverlay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

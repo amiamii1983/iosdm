@@ -186,8 +186,7 @@ struct DownloadRowView: View {
                 CompatShareButton(
                     fileURL: fileURL,
                     fileName: task.fileName,
-                    symbolName: FileIconHelper.symbolName(for: task.fileName),
-                    requiresSecurityScope: task.savedInCustomDirectory
+                    symbolName: FileIconHelper.symbolName(for: task.fileName)
                 ) {
                     Image(systemName: "square.and.arrow.up.circle.fill")
                         .font(.system(size: 28))

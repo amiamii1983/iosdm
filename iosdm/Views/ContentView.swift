@@ -47,17 +47,12 @@ struct ContentView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            Group {
-                if horizontalSizeClass == .regular {
-                    wideSplitLayout
-                } else {
-                    compactLayout
-                }
+        Group {
+            if horizontalSizeClass == .regular {
+                wideSplitLayout
+            } else {
+                compactLayout
             }
-
-            // Minimal floating monitor (default OFF in Settings, zero cost when disabled or idle)
-            DownloadMonitorOverlay()
         }
         .sheet(isPresented: $showNewDownload) {
             NewDownloadSheet()
@@ -256,7 +251,7 @@ struct ContentView: View {
             Button {
                 showProxySettings = true
             } label: {
-                Label("VPN 状态与代理详细设置...", systemImage: "slider.horizontal.3")
+                Label("代理详细设置...", systemImage: "slider.horizontal.3")
             }
         } label: {
             if horizontalSizeClass == .regular {
@@ -385,7 +380,7 @@ struct ContentView: View {
         switch selectedFilter {
         case .all: return "iosdm 支持 HTTP / HTTPS、国外热门网盘解析、代理分流与断点续传，点击下方按钮添加链接。"
         case .active: return "所有下载任务均已完成，或点击右上角 + 添加新任务。"
-        case .completed: return DeviceStorageText.emptyCompletedHint(customFolderName: settings.customDownloadFolderName)
+        case .completed: return DeviceStorageText.emptyCompletedHint
         }
     }
 
