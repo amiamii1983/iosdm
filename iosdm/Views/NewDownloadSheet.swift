@@ -139,7 +139,7 @@ struct NewDownloadSheet: View {
 
                     Picker("网络代理", selection: $taskProxyChoice) {
                         Text("跟随全局（\(settings.proxySettings.mode.shortTitle)）").tag(TaskProxyChoice.followGlobal)
-                        Text("自动（小火箭 / 系统）").tag(TaskProxyChoice.auto)
+                        Text("自动（系统 / VPN）").tag(TaskProxyChoice.auto)
                         Text("手动代理").tag(TaskProxyChoice.manual)
                         Text("直连").tag(TaskProxyChoice.direct)
                     }

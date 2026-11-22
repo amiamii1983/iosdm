@@ -12,7 +12,7 @@ enum ProxyMode: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var displayTitle: String {
         switch self {
-        case .auto: return "自动（小火箭 / 系统代理）"
+        case .auto: return "自动（系统 / VPN 代理）"
         case .manual: return "手动代理"
         case .direct: return "直连（不使用代理）"
         }
@@ -29,7 +29,7 @@ enum ProxyMode: String, Codable, CaseIterable, Identifiable, Sendable {
     var descriptionText: String {
         switch self {
         case .auto:
-            return "自动跟随系统网络与小火箭（Shadowrocket）等翻墙分流规则，国内直连、国外走节点，互不影响。"
+            return "自动跟随系统网络与 VPN 代理软件（如 Shadowrocket、Surge、Quantumult X、Loon、Clash 等）的分流规则，国内直连、国外走代理，互不影响。"
         case .manual:
             return "指定 HTTP/HTTPS 或 SOCKS5 代理地址，配合国内域名直连分流，不影响中国与国外网络下载。"
         case .direct:
@@ -103,10 +103,10 @@ struct DetectedSystemProxyInfo: Equatable, Sendable {
 
     var summaryTitle: String {
         if hasActiveVPNTunnel && (primaryProxyHost != nil) {
-            return "已读取到小火箭 / VPN 代理"
+            return "已读取到系统 / VPN 代理"
         }
         if hasActiveVPNTunnel {
-            return "已检测到 VPN / 小火箭分流接管"
+            return "已检测到 VPN 虚拟网卡分流接管"
         }
         if primaryProxyHost != nil || pacURL != nil {
             return "已检测到系统网络代理"

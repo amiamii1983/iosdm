@@ -256,7 +256,7 @@ struct ContentView: View {
             Button {
                 showProxySettings = true
             } label: {
-                Label("小火箭状态与代理详细设置...", systemImage: "slider.horizontal.3")
+                Label("VPN 状态与代理详细设置...", systemImage: "slider.horizontal.3")
             }
         } label: {
             if horizontalSizeClass == .regular {
@@ -281,9 +281,7 @@ struct ContentView: View {
     }
 
     private func rowContent(for task: DownloadTaskModel) -> some View {
-        let shareURL: URL? = manager.completedFileExists(for: task)
-            ? manager.completedFileURL(for: task)
-            : nil
+        let shareURL: URL? = manager.completedFileURL(for: task)
         return DownloadRowView(
             task: task,
             completedFileURL: shareURL,

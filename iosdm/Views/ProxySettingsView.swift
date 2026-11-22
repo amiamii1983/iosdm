@@ -31,13 +31,13 @@ struct ProxySettingsView: View {
                 }
             }
             .onAppear {
-                portText = String(settings.proxySettings.port)
+                portText = settings.proxySettings.port > 0 ? String(settings.proxySettings.port) : ""
                 detectedInfo = ProxyManager.detectSystemProxy()
             }
             .alert("已导入代理参数", isPresented: $importedToast) {
                 Button("好", role: .cancel) {}
             } message: {
-                Text("已将系统/小火箭代理地址填入手动代理配置。")
+                Text("已将检测到的系统 / VPN 代理地址填入手动代理配置。")
             }
         }
     }
@@ -65,7 +65,7 @@ struct ProxySettingsView: View {
                 detectedInfo = ProxyManager.detectSystemProxy()
                 testResult = nil
             } label: {
-                Label("刷新读取小火箭 / 系统代理", systemImage: "arrow.clockwise")
+                Label("刷新读取系统 / VPN 代理", systemImage: "arrow.clockwise")
             }
 
             if let host = detectedInfo.primaryProxyHost,
@@ -82,9 +82,9 @@ struct ProxySettingsView: View {
                 }
             }
         } header: {
-            Text("当前系统与小火箭状态")
+            Text("当前系统与 VPN 代理状态")
         } footer: {
-            Text("仅在打开本页或点击刷新时读取一次系统状态，后台不轮询、不耗电。小火箭开启翻墙后，使用「自动」模式即可直接共享其国内外分流。")
+            Text("仅在打开本页或点击刷新时读取一次系统状态，后台不轮询、不耗电。开启 Shadowrocket、Surge、Quantumult X、Loon、Clash 等代理软件后，使用「自动」模式即可直接共享其国内外分流。")
         }
     }
 
@@ -147,8 +147,16 @@ struct ProxySettingsView: View {
                         }
                         if let parsed = Int(digits), (1...65535).contains(parsed) {
                             settings.proxySettings.port = parsed
+                        } else {
+                            settings.proxySettings.port = 0
                         }
                     }
+            }
+
+            if !settings.proxySettings.isManualConfigValid {
+                Text("请填写有效的代理服务器地址，且端口须在 1 – 65535 之间。")
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
 
             HStack {
@@ -169,7 +177,7 @@ struct ProxySettingsView: View {
         } header: {
             Text("手动代理服务器")
         } footer: {
-            Text("若小火箭开启了「代理共享」，可填写 127.0.0.1 与对应端口，或填写局域网电脑/软路由的 HTTP 或 SOCKS5 代理。")
+            Text("若本机代理软件开启了「代理共享」或本地端口，可填写 127.0.0.1 与对应端口，或填写局域网电脑/软路由的 HTTP 或 SOCKS5 代理。")
         }
     }
 

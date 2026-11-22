@@ -8,7 +8,9 @@ struct TaskDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showPreview = false
-    @State private var showRenameAlert = false
+    @State private var showExportPicker = false
+    @State private var showExportedToast = false
+    @State private var showRenameSheet = false
     @State private var renameText = ""
     @State private var showDeleteDialog = false
     @State private var copiedToast = false
@@ -39,18 +41,41 @@ struct TaskDetailView: View {
                             .ignoresSafeArea()
                     }
                 }
-                .alert("重命名文件", isPresented: $showRenameAlert) {
-                    TextField("新文件名", text: $renameText)
-                    Button("取消", role: .cancel) {}
-                    Button("确定") {
-                        do {
-                            try manager.renameCompletedFile(taskId: task.id, newName: renameText)
-                        } catch {
-                            renameError = error.localizedDescription
-                        }
+                .sheet(isPresented: $showExportPicker) {
+                    if let fileURL = manager.completedFileURL(for: task) {
+                        FileExportPickerView(
+                            fileURL: fileURL,
+                            onCompleted: {
+                                showExportPicker = false
+                                showExportedToast = true
+                            },
+                            onCancel: {
+                                showExportPicker = false
+                            }
+                        )
                     }
+                }
+                .sheet(isPresented: $showRenameSheet) {
+                    RenameFileSheet(
+                        initialName: renameText,
+                        onSave: { newName in
+                            do {
+                                try manager.renameCompletedFile(taskId: task.id, newName: newName)
+                                showRenameSheet = false
+                            } catch {
+                                showRenameSheet = false
+                                renameError = error.localizedDescription
+                            }
+                        },
+                        onCancel: {
+                            showRenameSheet = false
+                        }
+                    )
+                }
+                .alert("已保存到「文件」App", isPresented: $showExportedToast) {
+                    Button("好", role: .cancel) {}
                 } message: {
-                    Text("将同步重命名本地已下载的文件")
+                    Text("已将文件副本成功导出到您选择的目录。")
                 }
                 .alert("重命名失败", isPresented: Binding(
                     get: { renameError != nil },
@@ -205,11 +230,19 @@ struct TaskDetailView: View {
                 }
                 .disabled(!exists)
 
+                Button {
+                    showExportPicker = true
+                } label: {
+                    Label("另存到「文件」App", systemImage: "folder.badge.plus")
+                }
+                .disabled(!exists)
+
                 if let fileURL, exists {
                     CompatShareButton(
                         fileURL: fileURL,
                         fileName: task.fileName,
-                        symbolName: FileIconHelper.symbolName(for: task.fileName)
+                        symbolName: FileIconHelper.symbolName(for: task.fileName),
+                        requiresSecurityScope: task.savedInCustomDirectory
                     ) {
                         Label("分享 / 导出到其他应用", systemImage: "square.and.arrow.up")
                     }
@@ -220,7 +253,7 @@ struct TaskDetailView: View {
 
                 Button {
                     renameText = task.savedFileName ?? task.fileName
-                    showRenameAlert = true
+                    showRenameSheet = true
                 } label: {
                     Label("重命名文件", systemImage: "pencil")
                 }
@@ -397,6 +430,45 @@ struct TaskDetailView: View {
         case .paused: return .orange
         case .failed: return .red
         case .pending: return .gray
+        }
+    }
+}
+
+struct RenameFileSheet: View {
+    @State private var nameText: String
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    init(initialName: String, onSave: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+        _nameText = State(initialValue: initialName)
+        self.onSave = onSave
+        self.onCancel = onCancel
+    }
+
+    var body: some View {
+        CompatNavigationStack {
+            Form {
+                Section {
+                    TextField("新文件名", text: $nameText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                } footer: {
+                    Text("将同步重命名本地已下载的文件。")
+                }
+            }
+            .navigationTitle("重命名文件")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("确定") {
+                        onSave(nameText)
+                    }
+                    .disabled(nameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
     }
 }

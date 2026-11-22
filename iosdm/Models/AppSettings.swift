@@ -135,6 +135,7 @@ final class AppSettings: ObservableObject {
     }
 
     func setCustomDownloadFolder(url: URL) throws {
+        try StoragePaths.verifyDirectoryWritable(url)
         let bookmark = try StoragePaths.makeBookmarkData(for: url)
         let displayName = url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent
         self.customDownloadBookmarkData = bookmark

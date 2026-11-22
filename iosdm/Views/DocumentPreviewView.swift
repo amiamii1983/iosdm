@@ -72,18 +72,19 @@ struct QuickLookPreview: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - Folder Picker for Custom Download Directory (iOS 15+)
+// MARK: - Export Single File to Apple Files App (works reliably even inside LiveContainer)
 
-struct FolderPickerView: UIViewControllerRepresentable {
-    let onPicked: (URL) -> Void
+struct FileExportPickerView: UIViewControllerRepresentable {
+    let fileURL: URL
+    let onCompleted: () -> Void
     let onCancel: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onPicked: onPicked, onCancel: onCancel)
+        Coordinator(fileURL: fileURL, onCompleted: onCompleted, onCancel: onCancel)
     }
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
+        let picker = UIDocumentPickerViewController(forExporting: [fileURL], asCopy: true)
         picker.allowsMultipleSelection = false
         picker.delegate = context.coordinator
         return picker
@@ -92,23 +93,38 @@ struct FolderPickerView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
 
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPicked: (URL) -> Void
+        private let fileURL: URL
+        private var isAccessing = false
+        let onCompleted: () -> Void
         let onCancel: () -> Void
 
-        init(onPicked: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
-            self.onPicked = onPicked
+        init(fileURL: URL, onCompleted: @escaping () -> Void, onCancel: @escaping () -> Void) {
+            self.fileURL = fileURL
+            self.isAccessing = fileURL.startAccessingSecurityScopedResource()
+            self.onCompleted = onCompleted
             self.onCancel = onCancel
+            super.init()
         }
 
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            if let first = urls.first {
-                onPicked(first)
-            } else {
-                onCancel()
+        deinit {
+            if isAccessing {
+                fileURL.stopAccessingSecurityScopedResource()
             }
         }
 
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            if isAccessing {
+                fileURL.stopAccessingSecurityScopedResource()
+                isAccessing = false
+            }
+            onCompleted()
+        }
+
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            if isAccessing {
+                fileURL.stopAccessingSecurityScopedResource()
+                isAccessing = false
+            }
             onCancel()
         }
     }
@@ -168,10 +184,11 @@ struct CompatShareButton<Label: View>: View {
     let fileURL: URL
     let fileName: String
     let symbolName: String
+    var requiresSecurityScope: Bool = false
     @ViewBuilder let label: () -> Label
 
     var body: some View {
-        if #available(iOS 16.0, *) {
+        if #available(iOS 16.0, *), !requiresSecurityScope {
             ShareLink(
                 item: fileURL,
                 preview: SharePreview(fileName, image: Image(systemName: symbolName))
@@ -180,14 +197,14 @@ struct CompatShareButton<Label: View>: View {
             }
         } else {
             Button {
-                presentLegacyShareSheet(for: fileURL)
+                presentScopedShareSheet(for: fileURL)
             } label: {
                 label()
             }
         }
     }
 
-    private func presentLegacyShareSheet(for url: URL) {
+    private func presentScopedShareSheet(for url: URL) {
         let accessed = url.startAccessingSecurityScopedResource()
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         activityVC.completionWithItemsHandler = { _, _, _, _ in

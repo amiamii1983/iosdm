@@ -98,6 +98,29 @@ struct StoragePaths: Sendable {
         }
     }
 
+    /// Verifies that a user-selected external directory is actually writable under security-scoped access.
+    static func verifyDirectoryWritable(_ dirURL: URL) throws {
+        let accessed = dirURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                dirURL.stopAccessingSecurityScopedResource()
+            }
+        }
+        let probeURL = dirURL.appendingPathComponent(".iosdm_write_probe_\(UUID().uuidString)", isDirectory: false)
+        do {
+            try Data("ok".utf8).write(to: probeURL, options: [.atomic])
+            try? FileManager.default.removeItem(at: probeURL)
+        } catch {
+            throw NSError(
+                domain: "com.iosdm.storage",
+                code: 1001,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "当前所选目录没有写入权限（若使用 LiveContainer 运行，可直接在已完成文件详情页点「另存到『文件』App」导出）：\(error.localizedDescription)"
+                ]
+            )
+        }
+    }
+
     /// Creates a persistent bookmark for a user-selected folder or file.
     static func makeBookmarkData(for url: URL) throws -> Data {
         let accessed = url.startAccessingSecurityScopedResource()

@@ -17,6 +17,7 @@ final class DownloadManager: ObservableObject {
     private var activeRunners: [UUID: TaskDownloadRunner] = [:]
     private var activeProbes: [UUID: Task<Void, Never>] = [:]
     private var refreshedOnceTasks: Set<UUID> = []
+    private var resolvedCompletedURLCache: [UUID: URL] = [:]
     private var lastSampledBytes: [UUID: Int64] = [:]
     private var lastPersistedByteSum: Int64 = -1
     private var lastTickDate: Date = Date()
@@ -50,16 +51,24 @@ final class DownloadManager: ObservableObject {
 
     func completedFileURL(for task: DownloadTaskModel) -> URL? {
         guard task.status == .completed, let savedName = task.savedFileName else { return nil }
+        if let cached = resolvedCompletedURLCache[task.id] {
+            return cached
+        }
+        let resolved: URL
         if task.savedInCustomDirectory {
             if let fileBookmark = task.savedFileBookmarkData,
-               let resolved = StoragePaths.resolveBookmarkData(fileBookmark) {
-                return resolved
+               let urlFromBookmark = StoragePaths.resolveBookmarkData(fileBookmark) {
+                resolved = urlFromBookmark
+            } else if let customDir = activeCustomDirectoryURL() {
+                resolved = customDir.appendingPathComponent(savedName, isDirectory: false)
+            } else {
+                resolved = storage.completedFileURL(for: savedName)
             }
-            if let customDir = activeCustomDirectoryURL() {
-                return customDir.appendingPathComponent(savedName, isDirectory: false)
-            }
+        } else {
+            resolved = storage.completedFileURL(for: savedName)
         }
-        return storage.completedFileURL(for: savedName)
+        resolvedCompletedURLCache[task.id] = resolved
+        return resolved
     }
 
     func completedFileExists(for task: DownloadTaskModel) -> Bool {
@@ -206,11 +215,15 @@ final class DownloadManager: ObservableObject {
         }
 
         refreshedOnceTasks.remove(taskId)
+        resolvedCompletedURLCache.removeValue(forKey: taskId)
         try? FileManager.default.removeItem(at: storage.partialFileURL(for: taskId))
 
         tasks[idx].resolvedURL = nil
         tasks[idx].resolvedHeaders = [:]
         tasks[idx].savedFileName = nil
+        tasks[idx].savedInCustomDirectory = false
+        tasks[idx].savedFolderDisplayName = nil
+        tasks[idx].savedFileBookmarkData = nil
         tasks[idx].totalBytes = -1
         tasks[idx].supportsRange = false
         tasks[idx].eTag = nil
@@ -236,6 +249,7 @@ final class DownloadManager: ObservableObject {
             _ = runner.stopAndSnapshot()
         }
         refreshedOnceTasks.remove(taskId)
+        resolvedCompletedURLCache.removeValue(forKey: taskId)
         lastSampledBytes.removeValue(forKey: taskId)
 
         if let idx = tasks.firstIndex(where: { $0.id == taskId }) {
@@ -286,6 +300,7 @@ final class DownloadManager: ObservableObject {
         if tasks[idx].savedInCustomDirectory {
             tasks[idx].savedFileBookmarkData = try? StoragePaths.makeBookmarkData(for: newURL)
         }
+        resolvedCompletedURLCache[taskId] = newURL
         persistTasks()
     }
 
@@ -681,6 +696,7 @@ final class DownloadManager: ObservableObject {
     }
 
     private func finalizeCompletedFile(taskId: UUID, totalWritten: Int64) {
+        resolvedCompletedURLCache.removeValue(forKey: taskId)
         guard let idx = tasks.firstIndex(where: { $0.id == taskId }) else { return }
         let partURL = storage.partialFileURL(for: taskId)
 
@@ -753,6 +769,7 @@ final class DownloadManager: ObservableObject {
     }
 
     private func finalizeEmptyFile(taskId: UUID) {
+        resolvedCompletedURLCache.removeValue(forKey: taskId)
         guard let idx = tasks.firstIndex(where: { $0.id == taskId }) else { return }
         let reserved = Set(tasks.compactMap { $0.id == taskId ? nil : $0.savedFileName?.lowercased() })
 

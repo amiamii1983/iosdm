@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject private var manager: DownloadManager
@@ -24,7 +25,7 @@ struct SettingsView: View {
     var body: some View {
         CompatNavigationStack {
             Form {
-                Section("网络代理（小火箭 / 手动分流）") {
+                Section("网络代理（自动 / 手动分流）") {
                     Button {
                         showProxySheet = true
                     } label: {
@@ -65,9 +66,9 @@ struct SettingsView: View {
                     Text("下载保存目录")
                 } footer: {
                     if StoragePaths.isRunningInLiveContainer {
-                        Text("检测到当前运行在 LiveContainer 内。建议点上方自选常用文件夹（如「\(DeviceStorageText.deviceContainerName) / 下载」）；若文件夹选择器无法授权，请在 LiveContainer 中为 iosdm 开启「Fix File Picker」。")
+                        Text("选择目录时请点进具体子文件夹后再点右上角「打开」确认。检测到运行在 LiveContainer 内，若无法授予外部目录写入权限，可直接在已下载文件的详情页使用「另存到『文件』App」一键保存到「\(DeviceStorageText.deviceContainerName) / 下载」。")
                     } else {
-                        Text("默认保存在「文件」App -> \(DeviceStorageText.deviceContainerName) -> iosdm；也可自选其他文件夹、iCloud 或外接存储。若自定义目录暂不可用，将自动回退默认目录保存以防丢失。")
+                        Text("默认保存在「文件」App -> \(DeviceStorageText.deviceContainerName) -> iosdm；选择自选目录时请点进具体子文件夹再点右上角「打开」确认。若自定义目录暂不可用，将自动回退默认目录保存以防丢失。")
                     }
                 }
 
@@ -173,20 +174,22 @@ struct SettingsView: View {
             .sheet(isPresented: $showProxySheet) {
                 ProxySettingsView()
             }
-            .sheet(isPresented: $showFolderPicker) {
-                FolderPickerView(
-                    onPicked: { url in
-                        showFolderPicker = false
-                        do {
-                            try settings.setCustomDownloadFolder(url: url)
-                        } catch {
-                            folderErrorMessage = "无法保存目录权限：\(error.localizedDescription)"
-                        }
-                    },
-                    onCancel: {
-                        showFolderPicker = false
+            .fileImporter(
+                isPresented: $showFolderPicker,
+                allowedContentTypes: [.folder],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    do {
+                        try settings.setCustomDownloadFolder(url: url)
+                    } catch {
+                        folderErrorMessage = error.localizedDescription
                     }
-                )
+                case .failure(let error):
+                    folderErrorMessage = "无法打开所选目录：\(error.localizedDescription)"
+                }
             }
             .confirmationDialog("清空已完成任务", isPresented: $showClearCompletedDialog, titleVisibility: .visible) {
                 Button("仅清空记录（保留本地文件）") {
