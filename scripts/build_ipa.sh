@@ -4,8 +4,10 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${PROJECT_DIR}/build"
 DIST_DIR="${PROJECT_DIR}/dist"
+VERSION_STR="${IOSDM_VERSION:-1.0}"
+RELEASE_TAG="v${VERSION_STR}"
 
-rm -rf "${BUILD_DIR}" "${DIST_DIR}/iosdm.ipa" "${DIST_DIR}/iosdm-iPhone.ipa"
+rm -rf "${BUILD_DIR}" "${DIST_DIR}/iosdm.ipa" "${DIST_DIR}/iosdm-iPhone.ipa" "${DIST_DIR}/version.json"
 mkdir -p "${DIST_DIR}"
 
 build_variant() {
@@ -48,11 +50,23 @@ build_variant() {
   )
 }
 
-# 1. Universal (iPhone + iPad / iPadOS 27.2.1)
+# 1. Universal (iPhone + iPad, iOS/iPadOS 15.0 ~ 27.2.1)
 build_variant "Universal" "1,2" "${DIST_DIR}/iosdm.ipa"
 
-# 2. Dedicated iPhone edition
+# 2. Dedicated iPhone edition (iOS 15.0+)
 build_variant "iPhone" "1" "${DIST_DIR}/iosdm-iPhone.ipa"
 
+# 3. Generate lightweight version.json manifest for manual update checks
+cat > "${DIST_DIR}/version.json" <<EOF
+{
+  "version": "${VERSION_STR}",
+  "build": 1,
+  "notes": "iosdm v${VERSION_STR}：支持 iOS/iPadOS 15.0+、自定义下载目录、可选低功耗下载监视小窗、小火箭/手动代理分流与海外网盘直链解析。",
+  "releaseURL": "https://github.com/amiamii1983/iosdm/releases/tag/${RELEASE_TAG}",
+  "universalIPAURL": "https://github.com/amiamii1983/iosdm/releases/download/${RELEASE_TAG}/iosdm.ipa",
+  "iPhoneIPAURL": "https://github.com/amiamii1983/iosdm/releases/download/${RELEASE_TAG}/iosdm-iPhone.ipa"
+}
+EOF
+
 echo "==> 打包完成："
-ls -lh "${DIST_DIR}/iosdm.ipa" "${DIST_DIR}/iosdm-iPhone.ipa"
+ls -lh "${DIST_DIR}/iosdm.ipa" "${DIST_DIR}/iosdm-iPhone.ipa" "${DIST_DIR}/version.json"

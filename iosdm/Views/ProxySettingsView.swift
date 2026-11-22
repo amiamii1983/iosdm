@@ -11,7 +11,7 @@ struct ProxySettingsView: View {
     @State private var importedToast = false
 
     var body: some View {
-        NavigationStack {
+        CompatNavigationStack {
             Form {
                 systemStatusSection
                 modeSection
@@ -181,11 +181,15 @@ struct ProxySettingsView: View {
                 Text("自定义直连绕过域名（逗号或换行分隔）")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextField("如 *.example.com, 192.168.*", text: $settings.proxySettings.customBypassRules, axis: .vertical)
-                    .lineLimit(2...4)
-                    .font(.caption.monospaced())
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
+                CompatMultilineField(
+                    placeholder: "如 *.example.com, 192.168.*",
+                    text: $settings.proxySettings.customBypassRules,
+                    minLines: 2,
+                    maxLines: 4
+                )
+                .font(.caption.monospaced())
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
             }
         } header: {
             Text("国内外分流保护")

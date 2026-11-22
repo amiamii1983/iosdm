@@ -3,14 +3,22 @@ import Foundation
 struct StoragePaths: Sendable {
     static let shared = StoragePaths()
 
+    static var isRunningInLiveContainer: Bool {
+        let bundlePath = Bundle.main.bundlePath.lowercased()
+        let homePath = NSHomeDirectory().lowercased()
+        return bundlePath.contains("livecontainer") || homePath.contains("livecontainer")
+    }
+
     let documentsDirectory: URL
     let appSupportDirectory: URL
     let partialsDirectory: URL
     let tasksMetadataURL: URL
+    let customDirectoryOverride: URL?
 
     init(
         documentsDirectory: URL? = nil,
-        appSupportDirectory: URL? = nil
+        appSupportDirectory: URL? = nil,
+        customDirectoryOverride: URL? = nil
     ) {
         let fm = FileManager.default
         let docs = documentsDirectory
@@ -25,6 +33,7 @@ struct StoragePaths: Sendable {
         self.appSupportDirectory = supportRoot
         self.partialsDirectory = supportRoot.appendingPathComponent("Partials", isDirectory: true)
         self.tasksMetadataURL = supportRoot.appendingPathComponent("tasks.json", isDirectory: false)
+        self.customDirectoryOverride = customDirectoryOverride
     }
 
     func ensureDirectoriesExist() {
@@ -42,7 +51,12 @@ struct StoragePaths: Sendable {
         documentsDirectory.appendingPathComponent(fileName, isDirectory: false)
     }
 
-    func uniqueCompletedFileName(preferred: String, reservedNames: Set<String> = []) -> String {
+    func uniqueCompletedFileName(
+        preferred: String,
+        in directory: URL? = nil,
+        reservedNames: Set<String> = []
+    ) -> String {
+        let targetDir = directory ?? documentsDirectory
         let sanitized = ByteFormatter.sanitizeFileName(preferred)
         let nsName = sanitized as NSString
         let ext = nsName.pathExtension
@@ -53,7 +67,7 @@ struct StoragePaths: Sendable {
             if reservedNames.contains(candidate.lowercased()) {
                 return false
             }
-            return !fm.fileExists(atPath: completedFileURL(for: candidate).path)
+            return !fm.fileExists(atPath: targetDir.appendingPathComponent(candidate, isDirectory: false).path)
         }
 
         if isAvailable(sanitized) {
@@ -68,6 +82,45 @@ struct StoragePaths: Sendable {
             }
             index += 1
         }
+    }
+
+    /// Moves a file across same or different volumes safely (falls back to copy + remove on cross-volume move).
+    static func moveOrCopyFile(from sourceURL: URL, to destinationURL: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destinationURL.path) {
+            try fm.removeItem(at: destinationURL)
+        }
+        do {
+            try fm.moveItem(at: sourceURL, to: destinationURL)
+        } catch {
+            try fm.copyItem(at: sourceURL, to: destinationURL)
+            try? fm.removeItem(at: sourceURL)
+        }
+    }
+
+    /// Creates a persistent bookmark for a user-selected folder or file.
+    static func makeBookmarkData(for url: URL) throws -> Data {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        #if os(macOS)
+        return try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        #else
+        return try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+        #endif
+    }
+
+    /// Resolves a previously stored bookmark back to a URL.
+    static func resolveBookmarkData(_ data: Data) -> URL? {
+        var isStale = false
+        #if os(macOS)
+        return try? URL(resolvingBookmarkData: data, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &isStale)
+        #else
+        return try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale)
+        #endif
     }
 
     func partialStorageBytes() -> Int64 {

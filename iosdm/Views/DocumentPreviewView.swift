@@ -1,6 +1,9 @@
 import SwiftUI
 import QuickLook
 import UIKit
+import UniformTypeIdentifiers
+
+// MARK: - QuickLook Preview (supports security-scoped external files)
 
 struct QuickLookPreview: UIViewControllerRepresentable {
     let url: URL
@@ -23,18 +26,36 @@ struct QuickLookPreview: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UINavigationController, context: Context) {
-        context.coordinator.url = url
+        context.coordinator.updateURL(url)
         if let ql = uiViewController.viewControllers.first as? QLPreviewController {
             ql.reloadData()
         }
     }
 
     final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        var url: URL
+        private var url: URL
+        private var isAccessingSecurityScope = false
         weak var controller: UIViewController?
 
         init(url: URL) {
             self.url = url
+            self.isAccessingSecurityScope = url.startAccessingSecurityScopedResource()
+            super.init()
+        }
+
+        deinit {
+            if isAccessingSecurityScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        func updateURL(_ newURL: URL) {
+            guard newURL != url else { return }
+            if isAccessingSecurityScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+            url = newURL
+            isAccessingSecurityScope = newURL.startAccessingSecurityScopedResource()
         }
 
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
@@ -51,16 +72,193 @@ struct QuickLookPreview: UIViewControllerRepresentable {
     }
 }
 
-enum DeviceStorageText {
-    static var deviceContainerName: String {
-        UIDevice.current.userInterfaceIdiom == .pad ? "我的 iPad" : "我的 iPhone"
+// MARK: - Folder Picker for Custom Download Directory (iOS 15+)
+
+struct FolderPickerView: UIViewControllerRepresentable {
+    let onPicked: (URL) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPicked: onPicked, onCancel: onCancel)
     }
 
-    static func filesAppLocation(fileName: String? = nil) -> String {
-        if let fileName, !fileName.isEmpty {
-            return "文件 App / \(deviceContainerName) / iosdm / \(fileName)"
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPicked: (URL) -> Void
+        let onCancel: () -> Void
+
+        init(onPicked: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
+            self.onPicked = onPicked
+            self.onCancel = onCancel
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            if let first = urls.first {
+                onPicked(first)
+            } else {
+                onCancel()
+            }
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onCancel()
+        }
+    }
+}
+
+// MARK: - iOS 15+ SwiftUI Compatibility Wrappers
+
+struct CompatNavigationStack<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if #available(iOS 16.0, *) {
+            NavigationStack {
+                content()
+            }
+        } else {
+            NavigationView {
+                content()
+            }
+            .navigationViewStyle(.stack)
+        }
+    }
+}
+
+struct CompatLabeledRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+            Spacer(minLength: 8)
+            Text(value)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+}
+
+struct CompatMultilineField: View {
+    let placeholder: String
+    @Binding var text: String
+    var minLines: Int = 2
+    var maxLines: Int = 4
+
+    var body: some View {
+        if #available(iOS 16.0, *) {
+            TextField(placeholder, text: $text, axis: .vertical)
+                .lineLimit(minLines...maxLines)
+        } else {
+            TextField(placeholder, text: $text)
+        }
+    }
+}
+
+struct CompatShareButton<Label: View>: View {
+    let fileURL: URL
+    let fileName: String
+    let symbolName: String
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        if #available(iOS 16.0, *) {
+            ShareLink(
+                item: fileURL,
+                preview: SharePreview(fileName, image: Image(systemName: symbolName))
+            ) {
+                label()
+            }
+        } else {
+            Button {
+                presentLegacyShareSheet(for: fileURL)
+            } label: {
+                label()
+            }
+        }
+    }
+
+    private func presentLegacyShareSheet(for url: URL) {
+        let accessed = url.startAccessingSecurityScopedResource()
+        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        activityVC.completionWithItemsHandler = { _, _, _, _ in
+            if accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+              let rootVC = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            if accessed { url.stopAccessingSecurityScopedResource() }
+            return
+        }
+
+        var topVC = rootVC
+        while let presented = topVC.presentedViewController {
+            topVC = presented
+        }
+
+        if let popover = activityVC.popoverPresentationController {
+            popover.sourceView = topVC.view
+            popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 1, height: 1)
+            popover.permittedArrowDirections = []
+        }
+
+        topVC.present(activityVC, animated: true)
+    }
+}
+
+// MARK: - Device & Storage Path Display Helper
+
+enum DeviceStorageText {
+    static var isPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
+    static var deviceContainerName: String {
+        isPad ? "我的 iPad" : "我的 iPhone"
+    }
+
+    static func currentDirectorySummary(customFolderName: String?) -> String {
+        if let customFolderName, !customFolderName.isEmpty {
+            return "自选目录：\(customFolderName)"
+        }
+        if StoragePaths.isRunningInLiveContainer {
+            return "LiveContainer 应用数据目录（默认）"
         }
         return "「文件」App -> \(deviceContainerName) -> iosdm"
+    }
+
+    static func savedFileLocation(task: DownloadTaskModel) -> String {
+        let fileName = task.savedFileName ?? task.fileName
+        if task.savedInCustomDirectory, let folder = task.savedFolderDisplayName, !folder.isEmpty {
+            return "自选目录 / \(folder) / \(fileName)"
+        }
+        if StoragePaths.isRunningInLiveContainer {
+            return "LiveContainer 数据目录 / Documents / \(fileName)"
+        }
+        return "文件 App / \(deviceContainerName) / iosdm / \(fileName)"
+    }
+
+    static func emptyCompletedHint(customFolderName: String?) -> String {
+        if let customFolderName, !customFolderName.isEmpty {
+            return "下载完成的文件会显示在这里，并保存在您设置的「\(customFolderName)」文件夹中。"
+        }
+        if StoragePaths.isRunningInLiveContainer {
+            return "当前运行在 LiveContainer 内，可在设置中自选下载目录（如「\(deviceContainerName) / 下载」），方便直接查找文件。"
+        }
+        return "下载完成的文件会显示在这里，并同步出现在系统的「文件」App -> \(deviceContainerName) -> iosdm 中。"
     }
 }
 

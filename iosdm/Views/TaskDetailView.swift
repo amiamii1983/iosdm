@@ -206,12 +206,10 @@ struct TaskDetailView: View {
                 .disabled(!exists)
 
                 if let fileURL, exists {
-                    ShareLink(
-                        item: fileURL,
-                        preview: SharePreview(
-                            task.fileName,
-                            image: Image(systemName: FileIconHelper.symbolName(for: task.fileName))
-                        )
+                    CompatShareButton(
+                        fileURL: fileURL,
+                        fileName: task.fileName,
+                        symbolName: FileIconHelper.symbolName(for: task.fileName)
                     ) {
                         Label("分享 / 导出到其他应用", systemImage: "square.and.arrow.up")
                     }
@@ -342,27 +340,27 @@ struct TaskDetailView: View {
                 }
             }
 
-            if let saved = task.savedFileName {
-                LabeledContent("文件位置", value: DeviceStorageText.filesAppLocation(fileName: saved))
+            if task.savedFileName != nil {
+                CompatLabeledRow(title: "文件位置", value: DeviceStorageText.savedFileLocation(task: task))
             }
 
-            LabeledContent("代理策略", value: manager.effectiveProxySettings(for: task).mode.displayTitle)
+            CompatLabeledRow(title: "代理策略", value: manager.effectiveProxySettings(for: task).mode.displayTitle)
 
             if let provider = task.cloudProvider {
-                LabeledContent("网盘解析", value: provider)
+                CompatLabeledRow(title: "网盘解析", value: provider)
             }
 
             if let mime = task.mimeType, !mime.isEmpty {
-                LabeledContent("MIME 类型", value: mime)
+                CompatLabeledRow(title: "MIME 类型", value: mime)
             }
 
             if let eTag = task.eTag, !eTag.isEmpty {
-                LabeledContent("ETag", value: eTag)
+                CompatLabeledRow(title: "ETag", value: eTag)
             }
 
             if !task.customHeaders.isEmpty {
                 ForEach(task.customHeaders.keys.sorted(), id: \.self) { key in
-                    LabeledContent("Header: \(key)", value: task.customHeaders[key] ?? "")
+                    CompatLabeledRow(title: "Header: \(key)", value: task.customHeaders[key] ?? "")
                 }
             }
         }

@@ -47,7 +47,7 @@ struct NewDownloadSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        CompatNavigationStack {
             Form {
                 if clipboardHasURL && urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Section {
@@ -94,15 +94,19 @@ struct NewDownloadSheet: View {
                             }
                         }
 
-                        TextField("https://example.com/file.zip", text: $urlText, axis: .vertical)
-                            .lineLimit(2...5)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                            .font(.footnote.monospaced())
-                            .onChange(of: urlText) { _ in
-                                validationError = nil
-                            }
+                        CompatMultilineField(
+                            placeholder: "https://example.com/file.zip",
+                            text: $urlText,
+                            minLines: 2,
+                            maxLines: 5
+                        )
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .font(.footnote.monospaced())
+                        .onChange(of: urlText) { _ in
+                            validationError = nil
+                        }
 
                         if let provider = detectedProviderName {
                             Label("已识别 \(provider) 链接，iosdm 将自动解析真实文件直链", systemImage: "icloud.and.arrow.down")
@@ -170,11 +174,15 @@ struct NewDownloadSheet: View {
                             Text("其他自定义 Header（每行一项，格式 Key: Value）")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            TextField("X-Custom-Token: abc123", text: $extraHeadersText, axis: .vertical)
-                                .lineLimit(2...4)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled(true)
-                                .font(.footnote.monospaced())
+                            CompatMultilineField(
+                                placeholder: "X-Custom-Token: abc123",
+                                text: $extraHeadersText,
+                                minLines: 2,
+                                maxLines: 4
+                            )
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .font(.footnote.monospaced())
                         }
                     }
                 }
@@ -191,7 +199,7 @@ struct NewDownloadSheet: View {
                     Button(startImmediately ? "开始下载" : "添加任务") {
                         submit()
                     }
-                    .fontWeight(.semibold)
+                    .font(.body.weight(.semibold))
                     .disabled(urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }

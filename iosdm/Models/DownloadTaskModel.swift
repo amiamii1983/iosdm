@@ -32,6 +32,9 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
     var cloudProvider: String?
     var fileName: String
     var savedFileName: String?
+    var savedInCustomDirectory: Bool
+    var savedFolderDisplayName: String?
+    var savedFileBookmarkData: Data?
     var requestedThreadCount: Int
     var customHeaders: [String: String]
     var resolvedHeaders: [String: String]
@@ -60,6 +63,9 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
         case cloudProvider
         case fileName
         case savedFileName
+        case savedInCustomDirectory
+        case savedFolderDisplayName
+        case savedFileBookmarkData
         case requestedThreadCount
         case customHeaders
         case resolvedHeaders
@@ -84,6 +90,9 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
         cloudProvider: String? = nil,
         fileName: String,
         savedFileName: String? = nil,
+        savedInCustomDirectory: Bool = false,
+        savedFolderDisplayName: String? = nil,
+        savedFileBookmarkData: Data? = nil,
         requestedThreadCount: Int = 4,
         customHeaders: [String: String] = [:],
         resolvedHeaders: [String: String] = [:],
@@ -106,6 +115,9 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
         self.cloudProvider = cloudProvider
         self.fileName = fileName
         self.savedFileName = savedFileName
+        self.savedInCustomDirectory = savedInCustomDirectory
+        self.savedFolderDisplayName = savedFolderDisplayName
+        self.savedFileBookmarkData = savedFileBookmarkData
         self.requestedThreadCount = max(1, min(8, requestedThreadCount))
         self.customHeaders = customHeaders
         self.resolvedHeaders = resolvedHeaders
@@ -122,7 +134,6 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
         self.completedAt = completedAt
     }
 
-    // Backwards-compatible decoding so existing tasks.json on user's iPad upgrades cleanly
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -132,6 +143,9 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
         cloudProvider = try c.decodeIfPresent(String.self, forKey: .cloudProvider)
         fileName = try c.decode(String.self, forKey: .fileName)
         savedFileName = try c.decodeIfPresent(String.self, forKey: .savedFileName)
+        savedInCustomDirectory = try c.decodeIfPresent(Bool.self, forKey: .savedInCustomDirectory) ?? false
+        savedFolderDisplayName = try c.decodeIfPresent(String.self, forKey: .savedFolderDisplayName)
+        savedFileBookmarkData = try c.decodeIfPresent(Data.self, forKey: .savedFileBookmarkData)
         requestedThreadCount = max(1, min(8, try c.decodeIfPresent(Int.self, forKey: .requestedThreadCount) ?? 4))
         customHeaders = try c.decodeIfPresent([String: String].self, forKey: .customHeaders) ?? [:]
         resolvedHeaders = try c.decodeIfPresent([String: String].self, forKey: .resolvedHeaders) ?? [:]
@@ -152,7 +166,6 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
         resolvedURL ?? originalURL
     }
 
-    /// Merges auto-resolved headers (e.g. cloud drive Referer/Cookie) with explicit user custom headers (user takes precedence).
     var mergedHeaders: [String: String] {
         var combined = resolvedHeaders
         for (k, v) in customHeaders {

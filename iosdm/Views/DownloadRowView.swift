@@ -82,7 +82,7 @@ struct DownloadRowView: View {
                 Spacer(minLength: 4)
                 Text(ByteFormatter.formatSpeed(task.speedBytesPerSec))
                     .foregroundStyle(.blue)
-                    .fontWeight(.medium)
+                    .font(.caption.weight(.medium))
                 if let eta = task.etaSeconds {
                     Text("· \(ByteFormatter.formatETA(eta))")
                 }
@@ -183,12 +183,10 @@ struct DownloadRowView: View {
 
         case .completed:
             if let fileURL = completedFileURL {
-                ShareLink(
-                    item: fileURL,
-                    preview: SharePreview(
-                        task.fileName,
-                        image: Image(systemName: FileIconHelper.symbolName(for: task.fileName))
-                    )
+                CompatShareButton(
+                    fileURL: fileURL,
+                    fileName: task.fileName,
+                    symbolName: FileIconHelper.symbolName(for: task.fileName)
                 ) {
                     Image(systemName: "square.and.arrow.up.circle.fill")
                         .font(.system(size: 28))

@@ -19,7 +19,6 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var showProxySettings = false
     @State private var selectedTaskId: UUID?
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var filteredTasks: [DownloadTaskModel] {
         let base: [DownloadTaskModel]
@@ -48,12 +47,17 @@ struct ContentView: View {
     }
 
     var body: some View {
-        Group {
-            if horizontalSizeClass == .regular {
-                splitLayout
-            } else {
-                compactLayout
+        ZStack(alignment: .bottomTrailing) {
+            Group {
+                if horizontalSizeClass == .regular {
+                    wideSplitLayout
+                } else {
+                    compactLayout
+                }
             }
+
+            // Minimal floating monitor (default OFF in Settings, zero cost when disabled or idle)
+            DownloadMonitorOverlay()
         }
         .sheet(isPresented: $showNewDownload) {
             NewDownloadSheet()
@@ -66,38 +70,55 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - iPadOS Wide Split Layout
+    // MARK: - iPadOS Wide Split Layout (iOS 16+ NavigationSplitView, iOS 15 NavigationView)
 
-    private var splitLayout: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            taskListContainer(isSplitMode: true)
-                .navigationSplitViewColumnWidth(min: 340, ideal: 400, max: 500)
-        } detail: {
-            NavigationStack {
-                if let selectedTaskId,
-                   manager.tasks.contains(where: { $0.id == selectedTaskId }) {
-                    TaskDetailView(taskId: selectedTaskId) {
-                        self.selectedTaskId = nil
-                    }
-                    .id(selectedTaskId)
-                } else {
-                    ContentUnavailableViewCompat(
-                        title: "选择一个下载任务",
-                        subtitle: "在左侧列表中点选任意任务，即可在此查看 iosdm 多线程分片进度、连接状态或预览导出文件。",
-                        systemImage: "sidebar.left"
-                    )
-                    .navigationTitle("下载详情")
-                    .navigationBarTitleDisplayMode(.inline)
+    @ViewBuilder
+    private var wideSplitLayout: some View {
+        if #available(iOS 16.0, *) {
+            NavigationSplitView {
+                taskListContainer(isSplitMode: true)
+                    .navigationSplitViewColumnWidth(min: 340, ideal: 400, max: 500)
+            } detail: {
+                NavigationStack {
+                    splitDetailContent
                 }
             }
+            .navigationSplitViewStyle(.balanced)
+        } else {
+            NavigationView {
+                taskListContainer(isSplitMode: false)
+                ContentUnavailableViewCompat(
+                    title: "选择一个下载任务",
+                    subtitle: "在左侧列表中点选任意任务，即可查看 iosdm 多线程分片进度、连接状态或预览导出文件。",
+                    systemImage: "sidebar.left"
+                )
+            }
         }
-        .navigationSplitViewStyle(.balanced)
     }
 
-    // MARK: - iPhone / Compact Split View Layout
+    @ViewBuilder
+    private var splitDetailContent: some View {
+        if let selectedTaskId,
+           manager.tasks.contains(where: { $0.id == selectedTaskId }) {
+            TaskDetailView(taskId: selectedTaskId) {
+                self.selectedTaskId = nil
+            }
+            .id(selectedTaskId)
+        } else {
+            ContentUnavailableViewCompat(
+                title: "选择一个下载任务",
+                subtitle: "在左侧列表中点选任意任务，即可在此查看 iosdm 多线程分片进度、连接状态或预览导出文件。",
+                systemImage: "sidebar.left"
+            )
+            .navigationTitle("下载详情")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    // MARK: - iPhone / Compact Layout
 
     private var compactLayout: some View {
-        NavigationStack {
+        CompatNavigationStack {
             taskListContainer(isSplitMode: false)
         }
     }
@@ -158,7 +179,7 @@ struct ContentView: View {
         .navigationTitle("iosdm")
         .searchable(text: $searchText, prompt: "搜索文件名或链接")
         .toolbar {
-            ToolbarItemGroup(placement: .topBarLeading) {
+            ToolbarItemGroup(placement: .navigationBarLeading) {
                 Button {
                     showSettings = true
                 } label: {
@@ -169,7 +190,7 @@ struct ContentView: View {
                 proxyToolbarMenu
             }
 
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
                 if !manager.tasks.isEmpty {
                     Menu {
                         if manager.tasks.contains(where: { $0.canResume }) {
@@ -254,7 +275,7 @@ struct ContentView: View {
     private var proxyIconName: String {
         switch settings.proxySettings.mode {
         case .auto: return "network"
-        case .manual: return "network.badge.shield.half.filled"
+        case .manual: return "lock.shield"
         case .direct: return "bolt.horizontal"
         }
     }
@@ -366,7 +387,7 @@ struct ContentView: View {
         switch selectedFilter {
         case .all: return "iosdm 支持 HTTP / HTTPS、国外热门网盘解析、代理分流与断点续传，点击下方按钮添加链接。"
         case .active: return "所有下载任务均已完成，或点击右上角 + 添加新任务。"
-        case .completed: return "下载完成的文件会显示在这里，并同步出现在系统的\(DeviceStorageText.filesAppLocation()) 中。"
+        case .completed: return DeviceStorageText.emptyCompletedHint(customFolderName: settings.customDownloadFolderName)
         }
     }
 
