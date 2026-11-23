@@ -17,9 +17,8 @@ final class DownloadManager: ObservableObject {
     private var activeRunners: [UUID: TaskDownloadRunner] = [:]
     private var activeProbes: [UUID: Task<Void, Never>] = [:]
     private var refreshedOnceTasks: Set<UUID> = []
-    private var lastSampledBytes: [UUID: Int64] = [:]
+    private var speedHistory: [UUID: [(timestamp: TimeInterval, bytes: Int64)]] = [:]
     private var lastPersistedByteSum: Int64 = -1
-    private var lastTickDate: Date = Date()
     private var lastPersistDate: Date = Date()
     private var tickTask: Task<Void, Never>?
 
@@ -150,7 +149,7 @@ final class DownloadManager: ObservableObject {
         tasks[idx].speedBytesPerSec = 0
         tasks[idx].etaSeconds = nil
         tasks[idx].pausedByBackground = byBackground
-        lastSampledBytes.removeValue(forKey: taskId)
+        speedHistory.removeValue(forKey: taskId)
 
         persistTasks()
         updateIdleTimer()
@@ -201,7 +200,7 @@ final class DownloadManager: ObservableObject {
         tasks[idx].completedAt = nil
         tasks[idx].pausedByBackground = false
         tasks[idx].status = .queued
-        lastSampledBytes.removeValue(forKey: taskId)
+        speedHistory.removeValue(forKey: taskId)
 
         persistTasks()
         scheduleNextTasks()
@@ -215,7 +214,7 @@ final class DownloadManager: ObservableObject {
             _ = runner.stopAndSnapshot()
         }
         refreshedOnceTasks.remove(taskId)
-        lastSampledBytes.removeValue(forKey: taskId)
+        speedHistory.removeValue(forKey: taskId)
 
         if let idx = tasks.firstIndex(where: { $0.id == taskId }) {
             let task = tasks[idx]
@@ -560,7 +559,7 @@ final class DownloadManager: ObservableObject {
 
         tasks[idx].status = .downloading
         tasks[idx].errorMessage = nil
-        lastSampledBytes[taskId] = task.downloadedBytes
+        speedHistory[taskId] = [(Date().timeIntervalSinceReferenceDate, task.downloadedBytes)]
 
         let isCloudRefreshable = task.cloudSourceURL != nil || task.cloudProvider != nil
         let expectsHTML = CloudLinkResolver.isHTMLFileName(task.fileName)
@@ -569,6 +568,7 @@ final class DownloadManager: ObservableObject {
             taskId: taskId,
             url: downloadURL,
             segments: task.segments,
+            requestedThreadCount: task.requestedThreadCount,
             customHeaders: task.mergedHeaders,
             defaultUserAgent: settings.defaultUserAgent,
             allowsCellularAccess: settings.allowsCellularAccess,
@@ -600,7 +600,7 @@ final class DownloadManager: ObservableObject {
         }
         tasks[idx].speedBytesPerSec = 0
         tasks[idx].etaSeconds = nil
-        lastSampledBytes.removeValue(forKey: taskId)
+        speedHistory.removeValue(forKey: taskId)
 
         switch completion {
         case .completed(let totalWritten):
@@ -710,7 +710,6 @@ final class DownloadManager: ObservableObject {
 
     private func startTickerIfNeeded() {
         guard tickTask == nil else { return }
-        lastTickDate = Date()
         lastPersistDate = Date()
 
         // 0.5s refresh cadence keeps CPU and SwiftUI redraw overhead very low on iPad/iPhone
@@ -751,9 +750,8 @@ final class DownloadManager: ObservableObject {
 
     @discardableResult
     private func syncActiveSnapshotsToTasks() -> Int64 {
-        let now = Date()
-        let dt = max(0.05, now.timeIntervalSince(lastTickDate))
-        lastTickDate = now
+        let now = Date().timeIntervalSinceReferenceDate
+        let windowSeconds: TimeInterval = 2.0
 
         var aggregateSpeed: Double = 0
         var aggregateBytes: Int64 = 0
@@ -765,19 +763,30 @@ final class DownloadManager: ObservableObject {
 
             let currentDownloaded = snapshot.reduce(0) { $0 + $1.downloadedBytes }
             aggregateBytes += currentDownloaded
-            let previousDownloaded = lastSampledBytes[taskId] ?? currentDownloaded
-            let delta = max(0, currentDownloaded - previousDownloaded)
-            lastSampledBytes[taskId] = currentDownloaded
 
-            let instantSpeed = Double(delta) / dt
-            let prevSpeed = tasks[idx].speedBytesPerSec
-            let smoothedSpeed = prevSpeed > 0 ? (0.4 * instantSpeed + 0.6 * prevSpeed) : instantSpeed
-            tasks[idx].speedBytesPerSec = smoothedSpeed
-            aggregateSpeed += smoothedSpeed
+            // 2.0s sliding window prevents jagged speed jumps on variable mobile/proxy networks
+            var samples = speedHistory[taskId] ?? []
+            samples.append((now, currentDownloaded))
+            while samples.count > 2 && (now - samples[0].timestamp) > windowSeconds {
+                samples.removeFirst()
+            }
+            speedHistory[taskId] = samples
 
-            if tasks[idx].totalBytes > 0 && smoothedSpeed > 1 {
+            let speed: Double
+            if let oldest = samples.first, samples.count >= 2 {
+                let dt = max(0.3, now - oldest.timestamp)
+                let delta = max(0, currentDownloaded - oldest.bytes)
+                speed = Double(delta) / dt
+            } else {
+                speed = 0
+            }
+
+            tasks[idx].speedBytesPerSec = speed
+            aggregateSpeed += speed
+
+            if tasks[idx].totalBytes > 0 && speed > 1 {
                 let remaining = max(0, tasks[idx].totalBytes - currentDownloaded)
-                tasks[idx].etaSeconds = Double(remaining) / smoothedSpeed
+                tasks[idx].etaSeconds = Double(remaining) / speed
             } else {
                 tasks[idx].etaSeconds = nil
             }

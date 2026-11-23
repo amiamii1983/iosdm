@@ -9,8 +9,20 @@ enum RunnerCompletion: Sendable {
 }
 
 final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    static let maxRetriesPerSegment = 5
-    static let minimumBytesPerSegment: Int64 = 512 * 1024 // 512 KB to avoid wasteful tiny connections
+    static let maxRetriesPerSegment = 8
+    static let minimumBytesPerSegment: Int64 = 512 * 1024       // 512 KB initial split floor
+    static let minimumStealRemainingBytes: Int64 = 1024 * 1024  // 1 MB minimum remaining to split
+    static let writeBufferThreshold: Int = 256 * 1024           // 256 KB write buffer per segment
+    static let writeBufferMaxAgeSeconds: TimeInterval = 0.4     // Also flush every 0.4s for smooth slow-link progress
+    static let stallTimeoutSeconds: TimeInterval = 12.0         // Reconnect stalled TCP stream after 12s idle
+    static let watchdogIntervalSeconds: TimeInterval = 3.0
+    static let maxTotalDynamicSegments = 24
+
+    private struct SegmentConnection {
+        let token: UUID
+        let session: URLSession
+        let task: URLSessionDataTask
+    }
 
     private let taskId: UUID
     private let url: URL
@@ -23,13 +35,20 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
     private let lastModified: String?
     private let expectedHTMLFile: Bool
     private let isRefreshableCloudLink: Bool
+    private let targetConcurrency: Int
     private let fileWriter: FileWriter
     private let onCompletion: @Sendable (RunnerCompletion) -> Void
 
     private let lock = NSLock()
     private var segments: [DownloadSegment]
-    private var activeDataTasks: [Int: URLSessionDataTask] = [:] // segmentId -> task
-    private var taskToSegment: [Int: Int] = [:] // taskIdentifier -> segmentId
+    private var nextSegmentId: Int
+    private var activeConnections: [Int: SegmentConnection] = [:]     // segmentId -> independent session & task
+    private var sessionToSegment: [ObjectIdentifier: (segmentId: Int, token: UUID)] = [:]
+    private var segmentBuffers: [Int: Data] = [:]                     // per-segment 256KB write buffer
+    private var segmentFlushingBytes: [Int: Int64] = [:]              // bytes currently in-flight inside pwrite
+    private var segmentLastFlushTime: [Int: TimeInterval] = [:]       // last flush timestamp per segment
+    private var segmentFlushLocks: [Int: NSLock] = [:]                // serializes pwrite flush per segment
+    private var segmentLastActivity: [Int: TimeInterval] = [:]
     private var retryCounts: [Int: Int] = [:]
     private var pendingRetryWorkItems: [Int: DispatchWorkItem] = [:]
     private var segmentFatalErrors: [Int: String] = [:]
@@ -37,14 +56,14 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
     private var isStopped = false
     private var didReportCompletion = false
 
-    private var session: URLSession!
-    private let delegateQueue: OperationQueue
-    private let retryQueue = DispatchQueue(label: "com.iosdm.runner.retry", qos: .utility)
+    private var watchdogTimer: DispatchSourceTimer?
+    private let retryQueue = DispatchQueue(label: "com.iosdm.runner.control", qos: .userInitiated)
 
     init(
         taskId: UUID,
         url: URL,
         segments: [DownloadSegment],
+        requestedThreadCount: Int? = nil,
         customHeaders: [String: String],
         defaultUserAgent: String,
         allowsCellularAccess: Bool,
@@ -60,6 +79,8 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         self.taskId = taskId
         self.url = url
         self.segments = segments
+        self.nextSegmentId = (segments.map(\.id).max() ?? -1) + 1
+        self.targetConcurrency = max(1, min(8, requestedThreadCount ?? segments.count))
         self.customHeaders = customHeaders
         self.defaultUserAgent = defaultUserAgent
         self.allowsCellularAccess = allowsCellularAccess
@@ -71,27 +92,11 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         self.isRefreshableCloudLink = isRefreshableCloudLink
         self.fileWriter = fileWriter
         self.onCompletion = onCompletion
-
-        // Low-overhead utility queue keeps CPU & battery usage minimal on iPad/iPhone
-        let queue = OperationQueue()
-        queue.name = "com.iosdm.runner.\(taskId.uuidString)"
-        queue.maxConcurrentOperationCount = 2
-        queue.qualityOfService = .utility
-        self.delegateQueue = queue
-
         super.init()
+    }
 
-        let config = URLSessionConfiguration.default
-        config.allowsCellularAccess = allowsCellularAccess
-        config.httpMaximumConnectionsPerHost = max(8, segments.count + 1)
-        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        config.urlCache = nil
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60 * 60 * 24 // 24 hours
-        config.waitsForConnectivity = false
-        ProxyManager.applyProxy(to: config, targetURL: url, settings: proxySettings)
-
-        self.session = URLSession(configuration: config, delegate: self, delegateQueue: delegateQueue)
+    deinit {
+        cancelWatchdog()
     }
 
     static func makeInitialSegments(totalBytes: Int64, requestedThreads: Int, supportsRange: Bool) -> [DownloadSegment] {
@@ -150,6 +155,7 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
             return
         }
 
+        startWatchdog()
         for segId in segmentIdsToLaunch {
             launchSegment(segId)
         }
@@ -163,21 +169,21 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         var copy = segments
         for idx in copy.indices {
             let segId = copy[idx].id
+            let effectiveDownloaded = accountedBytesLocked(for: copy[idx])
             if copy[idx].state == .downloading {
-                let currentBytes = copy[idx].downloadedBytes
                 if let sample = segmentSpeedSamples[segId] {
                     let dt = now - sample.timestamp
-                    if dt >= 0.3 {
-                        let delta = max(0, currentBytes - sample.bytes)
+                    if dt >= 0.4 {
+                        let delta = max(0, effectiveDownloaded - sample.bytes)
                         let instant = Double(delta) / dt
                         let prev = copy[idx].speedBytesPerSec
-                        let smoothed = prev > 0 ? (0.45 * instant + 0.55 * prev) : instant
+                        let smoothed = prev > 0 ? (0.35 * instant + 0.65 * prev) : instant
                         copy[idx].speedBytesPerSec = smoothed
                         segments[idx].speedBytesPerSec = smoothed
-                        segmentSpeedSamples[segId] = (currentBytes, now)
+                        segmentSpeedSamples[segId] = (effectiveDownloaded, now)
                     }
                 } else {
-                    segmentSpeedSamples[segId] = (currentBytes, now)
+                    segmentSpeedSamples[segId] = (effectiveDownloaded, now)
                 }
             } else {
                 copy[idx].speedBytesPerSec = 0
@@ -188,14 +194,17 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
     }
 
     func stopAndSnapshot() -> [DownloadSegment] {
+        cancelWatchdog()
+
         lock.lock()
         isStopped = true
         didReportCompletion = true
-        let tasksToCancel = Array(activeDataTasks.values)
-        activeDataTasks.removeAll()
-        taskToSegment.removeAll()
+        let connectionsToStop = Array(activeConnections.values)
+        activeConnections.removeAll()
+        sessionToSegment.removeAll()
         let retriesToCancel = Array(pendingRetryWorkItems.values)
         pendingRetryWorkItems.removeAll()
+        let allSegmentIds = segments.map(\.id)
         for idx in segments.indices where segments[idx].state == .downloading || segments[idx].state == .pending {
             segments[idx].state = .paused
             segments[idx].speedBytesPerSec = 0
@@ -205,10 +214,15 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         for item in retriesToCancel {
             item.cancel()
         }
-        for task in tasksToCancel {
-            task.cancel()
+        for conn in connectionsToStop {
+            conn.task.cancel()
+            conn.session.invalidateAndCancel()
         }
-        session.invalidateAndCancel()
+
+        // Flush all remaining per-segment write buffers safely before closing file
+        for segId in allSegmentIds {
+            _ = flushSegmentBuffer(segId, allowWhenStopped: true)
+        }
         fileWriter.syncAndClose()
 
         lock.lock()
@@ -217,13 +231,35 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         return finalSnapshot
     }
 
-    private func totalDownloadedBytes() -> Int64 {
-        lock.lock()
-        defer { lock.unlock() }
-        return segments.reduce(0) { $0 + $1.downloadedBytes }
+    // MARK: - Independent Session & Segment Launch
+
+    private func makeIndependentSession(for segmentId: Int) -> URLSession {
+        let queue = OperationQueue()
+        queue.name = "com.iosdm.seg.\(taskId.uuidString).\(segmentId)"
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .userInitiated
+
+        // Each segment uses its own ephemeral URLSession so HTTP/2 does NOT coalesce
+        // all threads onto one TCP socket (critical for Cloudflare / high-RTT / lossy links).
+        let config = URLSessionConfiguration.ephemeral
+        config.allowsCellularAccess = allowsCellularAccess
+        config.httpMaximumConnectionsPerHost = 2
+        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        config.urlCache = nil
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.timeoutIntervalForRequest = 25
+        config.timeoutIntervalForResource = 60 * 60 * 24
+        config.waitsForConnectivity = false
+        ProxyManager.applyProxy(to: config, targetURL: url, settings: proxySettings)
+
+        return URLSession(configuration: config, delegate: self, delegateQueue: queue)
     }
 
     private func launchSegment(_ segmentId: Int) {
+        // Ensure any leftover buffered bytes are flushed before reading currentOffset
+        _ = flushSegmentBuffer(segmentId, allowWhenStopped: false)
+
         lock.lock()
         guard !isStopped,
               let idx = segments.firstIndex(where: { $0.id == segmentId }) else {
@@ -234,15 +270,32 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
             segments[idx].state = .completed
             segments[idx].speedBytesPerSec = 0
             lock.unlock()
-            evaluateOverallState()
+            handleSegmentFinishedWork(segmentId)
             return
         }
 
+        // Tear down any previous connection for this segment
+        let oldConn = activeConnections.removeValue(forKey: segmentId)
+        if let oldConn {
+            sessionToSegment.removeValue(forKey: ObjectIdentifier(oldConn.session))
+        }
+
         let seg = segments[idx]
+        let now = Date().timeIntervalSinceReferenceDate
         segments[idx].state = .downloading
         segments[idx].errorMessage = nil
         segmentFatalErrors.removeValue(forKey: segmentId)
-        segmentSpeedSamples[segmentId] = (seg.downloadedBytes, Date().timeIntervalSinceReferenceDate)
+        segmentLastActivity[segmentId] = now
+        segmentLastFlushTime[segmentId] = now
+        segmentSpeedSamples[segmentId] = (seg.downloadedBytes, now)
+        if segmentFlushLocks[segmentId] == nil {
+            segmentFlushLocks[segmentId] = NSLock()
+        }
+        if segmentBuffers[segmentId] == nil {
+            var buf = Data()
+            buf.reserveCapacity(Self.writeBufferThreshold)
+            segmentBuffers[segmentId] = buf
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -275,19 +328,224 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
             }
         }
 
-        let dataTask = session.dataTask(with: request)
-        activeDataTasks[segmentId] = dataTask
-        taskToSegment[dataTask.taskIdentifier] = segmentId
+        let token = UUID()
+        let segSession = makeIndependentSession(for: segmentId)
+        let dataTask = segSession.dataTask(with: request)
+        let conn = SegmentConnection(token: token, session: segSession, task: dataTask)
+        activeConnections[segmentId] = conn
+        sessionToSegment[ObjectIdentifier(segSession)] = (segmentId, token)
         lock.unlock()
+
+        if let oldConn {
+            oldConn.task.cancel()
+            oldConn.session.invalidateAndCancel()
+        }
 
         dataTask.resume()
     }
+
+    // MARK: - Dynamic Work Stealing
+
+    private func handleSegmentFinishedWork(_ completedSegmentId: Int) {
+        if let stolenSegmentId = tryStealWork() {
+            launchSegment(stolenSegmentId)
+        } else {
+            evaluateOverallState()
+        }
+    }
+
+    /// Splits the largest remaining active segment in half so fast finished threads help eliminate slow tail segments.
+    private func tryStealWork() -> Int? {
+        guard supportsRange else { return nil }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard !isStopped,
+              segments.count < Self.maxTotalDynamicSegments else {
+            return nil
+        }
+
+        let currentActive = activeConnections.count + pendingRetryWorkItems.count
+        guard currentActive < targetConcurrency else {
+            return nil
+        }
+
+        var bestIndex: Int?
+        var bestRemaining: Int64 = 0
+
+        for idx in segments.indices {
+            let seg = segments[idx]
+            guard seg.hasKnownLength,
+                  seg.state == .downloading || seg.state == .pending else {
+                continue
+            }
+            let accounted = accountedBytesLocked(for: seg)
+            let remaining = seg.totalBytes - accounted
+            if remaining >= Self.minimumStealRemainingBytes && remaining > bestRemaining {
+                bestRemaining = remaining
+                bestIndex = idx
+            }
+        }
+
+        guard let victimIdx = bestIndex else { return nil }
+
+        let oldEnd = segments[victimIdx].endByte
+        let stealSize = bestRemaining / 2
+        let newVictimEnd = oldEnd - stealSize
+        let newStart = newVictimEnd + 1
+        let victimAccountedEnd = segments[victimIdx].startByte
+            + accountedBytesLocked(for: segments[victimIdx])
+            - 1
+
+        guard newVictimEnd > victimAccountedEnd, newStart <= oldEnd else {
+            return nil
+        }
+
+        segments[victimIdx].endByte = newVictimEnd
+        let newId = nextSegmentId
+        nextSegmentId += 1
+        segments.append(
+            DownloadSegment(
+                id: newId,
+                startByte: newStart,
+                endByte: oldEnd,
+                downloadedBytes: 0,
+                state: .pending
+            )
+        )
+        return newId
+    }
+
+    // MARK: - Stall Watchdog (Reconnects Hung / Stalled Streams)
+
+    private func startWatchdog() {
+        cancelWatchdog()
+        let timer = DispatchSource.makeTimerSource(queue: retryQueue)
+        timer.schedule(
+            deadline: .now() + Self.watchdogIntervalSeconds,
+            repeating: Self.watchdogIntervalSeconds,
+            leeway: .milliseconds(500)
+        )
+        timer.setEventHandler { [weak self] in
+            self?.checkStalledConnections()
+        }
+        lock.lock()
+        watchdogTimer = timer
+        lock.unlock()
+        timer.resume()
+    }
+
+    private func cancelWatchdog() {
+        lock.lock()
+        let timer = watchdogTimer
+        watchdogTimer = nil
+        lock.unlock()
+        timer?.cancel()
+    }
+
+    private func checkStalledConnections() {
+        let now = Date().timeIntervalSinceReferenceDate
+        var stalled: [(segmentId: Int, conn: SegmentConnection)] = []
+
+        lock.lock()
+        guard !isStopped else {
+            lock.unlock()
+            return
+        }
+        for (segId, conn) in activeConnections {
+            guard let lastTime = segmentLastActivity[segId],
+                  now - lastTime >= Self.stallTimeoutSeconds else {
+                continue
+            }
+            activeConnections.removeValue(forKey: segId)
+            sessionToSegment.removeValue(forKey: ObjectIdentifier(conn.session))
+            stalled.append((segId, conn))
+        }
+        lock.unlock()
+
+        for item in stalled {
+            item.conn.task.cancel()
+            item.conn.session.invalidateAndCancel()
+            if !flushSegmentBuffer(item.segmentId, allowWhenStopped: false) {
+                return
+            }
+            scheduleRetry(for: item.segmentId, reason: "连接卡顿，自动切换新连接续传")
+        }
+    }
+
+    // MARK: - Buffered Disk Flush
+
+    private func accountedBytesLocked(for seg: DownloadSegment) -> Int64 {
+        seg.downloadedBytes
+            + Int64(segmentBuffers[seg.id]?.count ?? 0)
+            + (segmentFlushingBytes[seg.id] ?? 0)
+    }
+
+    @discardableResult
+    private func flushSegmentBuffer(_ segmentId: Int, allowWhenStopped: Bool) -> Bool {
+        lock.lock()
+        let flushLock = segmentFlushLocks[segmentId]
+        lock.unlock()
+        guard let flushLock else { return true }
+
+        flushLock.lock()
+        defer { flushLock.unlock() }
+
+        let now = Date().timeIntervalSinceReferenceDate
+        lock.lock()
+        guard (allowWhenStopped || !isStopped),
+              let idx = segments.firstIndex(where: { $0.id == segmentId }),
+              let pending = segmentBuffers[segmentId],
+              !pending.isEmpty else {
+            lock.unlock()
+            return true
+        }
+        let writeOffset = segments[idx].currentOffset
+        let dataToWrite = pending
+        let writeCount = Int64(dataToWrite.count)
+        segmentBuffers[segmentId]?.removeAll(keepingCapacity: !allowWhenStopped)
+        segmentFlushingBytes[segmentId, default: 0] += writeCount
+        segmentLastFlushTime[segmentId] = now
+        lock.unlock()
+
+        do {
+            try fileWriter.write(dataToWrite, at: writeOffset)
+        } catch {
+            lock.lock()
+            segmentFlushingBytes[segmentId] = max(0, (segmentFlushingBytes[segmentId] ?? 0) - writeCount)
+            lock.unlock()
+            if case FileWriterError.closed = error {
+                return false
+            }
+            finishWith(.failed(error.localizedDescription))
+            return false
+        }
+
+        lock.lock()
+        segmentFlushingBytes[segmentId] = max(0, (segmentFlushingBytes[segmentId] ?? 0) - writeCount)
+        if let currentIdx = segments.firstIndex(where: { $0.id == segmentId }) {
+            segments[currentIdx].downloadedBytes += writeCount
+        }
+        lock.unlock()
+        return true
+    }
+
+    // MARK: - Retry & Completion Management
 
     private func scheduleRetry(for segmentId: Int, reason: String) {
         lock.lock()
         guard !isStopped,
               let idx = segments.firstIndex(where: { $0.id == segmentId }) else {
             lock.unlock()
+            return
+        }
+        if segments[idx].isRangeComplete {
+            segments[idx].state = .completed
+            segments[idx].speedBytesPerSec = 0
+            segments[idx].errorMessage = nil
+            lock.unlock()
+            handleSegmentFinishedWork(segmentId)
             return
         }
         let nextAttempt = (retryCounts[segmentId] ?? 0) + 1
@@ -303,11 +561,12 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         retryCounts[segmentId] = nextAttempt
         segments[idx].state = .pending
         segments[idx].speedBytesPerSec = 0
-        segments[idx].errorMessage = "正在重试 (\(nextAttempt)/\(Self.maxRetriesPerSegment))..."
+        segments[idx].errorMessage = "正在重连 (\(nextAttempt)/\(Self.maxRetriesPerSegment))..."
 
         let shouldResetSingleStream = !supportsRange
         if shouldResetSingleStream {
             segments[idx].downloadedBytes = 0
+            segmentBuffers[segmentId]?.removeAll(keepingCapacity: false)
         }
 
         let workItem = DispatchWorkItem { [weak self] in
@@ -326,7 +585,7 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         pendingRetryWorkItems[segmentId] = workItem
         lock.unlock()
 
-        let delay = min(5.0, 0.7 * Double(nextAttempt))
+        let delay = min(4.0, 0.5 * Double(nextAttempt))
         retryQueue.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
@@ -337,7 +596,7 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
             return
         }
         let allCompleted = segments.allSatisfy { $0.state == .completed }
-        let anyInFlight = !activeDataTasks.isEmpty || !pendingRetryWorkItems.isEmpty
+        let anyInFlight = !activeConnections.isEmpty || !pendingRetryWorkItems.isEmpty
         let firstError = segments.first(where: { $0.state == .failed })?.errorMessage
         let total = segments.reduce(0) { $0 + $1.downloadedBytes }
         lock.unlock()
@@ -350,6 +609,8 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
     }
 
     private func finishWith(_ result: RunnerCompletion) {
+        cancelWatchdog()
+
         lock.lock()
         guard !didReportCompletion else {
             lock.unlock()
@@ -357,23 +618,33 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         }
         didReportCompletion = true
         isStopped = true
-        let tasksToCancel = Array(activeDataTasks.values)
-        activeDataTasks.removeAll()
-        taskToSegment.removeAll()
+        let conns = Array(activeConnections.values)
+        activeConnections.removeAll()
+        sessionToSegment.removeAll()
         let retries = Array(pendingRetryWorkItems.values)
         pendingRetryWorkItems.removeAll()
+        let segIds = segments.map(\.id)
         lock.unlock()
 
         for item in retries {
             item.cancel()
         }
-        for task in tasksToCancel {
-            task.cancel()
+        for conn in conns {
+            conn.task.cancel()
+            conn.session.invalidateAndCancel()
         }
-        session.invalidateAndCancel()
+        for segId in segIds {
+            _ = flushSegmentBuffer(segId, allowWhenStopped: true)
+        }
         fileWriter.syncAndClose()
 
         onCompletion(result)
+    }
+
+    private func totalDownloadedBytes() -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return segments.reduce(0) { $0 + $1.downloadedBytes }
     }
 
     // MARK: - URLSessionDataDelegate
@@ -386,13 +657,13 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
         lock.lock()
-        let segId = taskToSegment[task.taskIdentifier]
-        let segment = segId.flatMap { id in segments.first(where: { $0.id == id }) }
+        let entry = sessionToSegment[ObjectIdentifier(session)]
+        let seg = entry.flatMap { info in segments.first(where: { $0.id == info.segmentId }) }
         lock.unlock()
 
         var redirected = request
         redirected.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        if supportsRange, let seg = segment, seg.hasKnownLength {
+        if supportsRange, let seg, seg.hasKnownLength {
             redirected.setValue("bytes=\(seg.currentOffset)-\(seg.endByte)", forHTTPHeaderField: "Range")
         }
         completionHandler(redirected)
@@ -406,14 +677,17 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
     ) {
         lock.lock()
         guard !isStopped,
-              let segId = taskToSegment[dataTask.taskIdentifier],
-              let idx = segments.firstIndex(where: { $0.id == segId }) else {
+              let info = sessionToSegment[ObjectIdentifier(session)],
+              activeConnections[info.segmentId]?.token == info.token,
+              let idx = segments.firstIndex(where: { $0.id == info.segmentId }) else {
             lock.unlock()
             completionHandler(.cancel)
             return
         }
+        let segId = info.segmentId
         let seg = segments[idx]
         let segmentCount = segments.count
+        segmentLastActivity[segId] = Date().timeIntervalSinceReferenceDate
         lock.unlock()
 
         guard let http = response as? HTTPURLResponse else {
@@ -424,7 +698,6 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
 
         let code = http.statusCode
 
-        // Guard against expired cloud links redirecting back to an HTML webpage mid-resume
         if !expectedHTMLFile && Self.isHTMLResponse(http) {
             completionHandler(.cancel)
             if isRefreshableCloudLink {
@@ -502,64 +775,105 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         guard !data.isEmpty else { return }
 
+        var shouldFlush = false
+        var hitSegmentEnd = false
+        var targetSegId: Int = -1
+
         lock.lock()
         guard !isStopped,
-              let segId = taskToSegment[dataTask.taskIdentifier],
-              let idx = segments.firstIndex(where: { $0.id == segId }) else {
+              let info = sessionToSegment[ObjectIdentifier(session)],
+              activeConnections[info.segmentId]?.token == info.token,
+              let idx = segments.firstIndex(where: { $0.id == info.segmentId }) else {
             lock.unlock()
             return
         }
-        let seg = segments[idx]
-        let writeOffset = seg.currentOffset
-        let hasKnownLength = seg.hasKnownLength
-        let remaining = seg.remainingBytes
-        lock.unlock()
 
-        let bytesToWrite: Int
-        if hasKnownLength {
-            guard remaining > 0 else {
+        targetSegId = info.segmentId
+        let now = Date().timeIntervalSinceReferenceDate
+        let seg = segments[idx]
+        let bufferedCount = Int64(segmentBuffers[targetSegId]?.count ?? 0)
+        let accounted = accountedBytesLocked(for: seg)
+        let lastFlush = segmentLastFlushTime[targetSegId] ?? now
+
+        if seg.hasKnownLength {
+            let remaining = seg.totalBytes - accounted
+            if remaining <= 0 {
+                hitSegmentEnd = true
+                shouldFlush = bufferedCount > 0
+                lock.unlock()
+                if shouldFlush {
+                    _ = flushSegmentBuffer(targetSegId, allowWhenStopped: false)
+                }
                 dataTask.cancel()
                 return
             }
-            bytesToWrite = min(data.count, Int(remaining))
-        } else {
-            bytesToWrite = data.count
-        }
-
-        let payload = (bytesToWrite == data.count) ? data : data.prefix(bytesToWrite)
-
-        do {
-            try fileWriter.write(payload, at: writeOffset)
-        } catch {
-            if case FileWriterError.closed = error {
-                return
+            let take = min(data.count, Int(remaining))
+            if take == data.count {
+                segmentBuffers[targetSegId, default: Data()].append(data)
+            } else {
+                segmentBuffers[targetSegId, default: Data()].append(data.prefix(take))
             }
-            finishWith(.failed(error.localizedDescription))
-            return
+            let newBuffered = Int64(segmentBuffers[targetSegId]?.count ?? 0)
+            let newAccounted = seg.downloadedBytes + newBuffered + (segmentFlushingBytes[targetSegId] ?? 0)
+            if newAccounted >= seg.totalBytes {
+                hitSegmentEnd = true
+                shouldFlush = true
+            } else if newBuffered >= Int64(Self.writeBufferThreshold)
+                        || (newBuffered > 0 && now - lastFlush >= Self.writeBufferMaxAgeSeconds) {
+                shouldFlush = true
+            }
+        } else {
+            segmentBuffers[targetSegId, default: Data()].append(data)
+            let newBuffered = segmentBuffers[targetSegId]?.count ?? 0
+            if newBuffered >= Self.writeBufferThreshold
+                || (newBuffered > 0 && now - lastFlush >= Self.writeBufferMaxAgeSeconds) {
+                shouldFlush = true
+            }
         }
 
-        lock.lock()
-        if let currentIdx = segments.firstIndex(where: { $0.id == segId }) {
-            segments[currentIdx].downloadedBytes += Int64(bytesToWrite)
-            retryCounts[segId] = 0
-        }
+        segmentLastActivity[targetSegId] = now
+        retryCounts[targetSegId] = 0
         lock.unlock()
+
+        if shouldFlush {
+            guard flushSegmentBuffer(targetSegId, allowWhenStopped: false) else { return }
+        }
+        if hitSegmentEnd {
+            // If this segment's endByte was shrunk by dynamic work stealing, cancel the tail cleanly now
+            dataTask.cancel()
+        }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let sessionKey = ObjectIdentifier(session)
+
         lock.lock()
-        guard let segId = taskToSegment.removeValue(forKey: task.taskIdentifier) else {
+        guard let info = sessionToSegment.removeValue(forKey: sessionKey) else {
             lock.unlock()
+            session.invalidateAndCancel()
             return
         }
-        activeDataTasks.removeValue(forKey: segId)
+        let segId = info.segmentId
+        let isCurrentConnection = (activeConnections[segId]?.token == info.token)
+        if isCurrentConnection {
+            activeConnections.removeValue(forKey: segId)
+        }
+        let stopped = isStopped
+        lock.unlock()
 
-        if isStopped {
-            lock.unlock()
+        // Always invalidate this segment's ephemeral session immediately to prevent leaks
+        session.invalidateAndCancel()
+
+        if stopped || !isCurrentConnection {
             return
         }
 
-        guard let idx = segments.firstIndex(where: { $0.id == segId }) else {
+        // Flush any remaining buffered bytes before inspecting completion state
+        guard flushSegmentBuffer(segId, allowWhenStopped: false) else { return }
+
+        lock.lock()
+        guard !isStopped,
+              let idx = segments.firstIndex(where: { $0.id == segId }) else {
             lock.unlock()
             return
         }
@@ -583,7 +897,7 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
                 segments[idx].speedBytesPerSec = 0
                 segments[idx].errorMessage = nil
                 lock.unlock()
-                evaluateOverallState()
+                handleSegmentFinishedWork(segId)
                 return
             }
 
@@ -616,7 +930,7 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
         segments[idx].speedBytesPerSec = 0
         segments[idx].errorMessage = nil
         lock.unlock()
-        evaluateOverallState()
+        handleSegmentFinishedWork(segId)
     }
 
     private func recordFatalSegmentError(_ segmentId: Int, message: String) {
@@ -666,7 +980,8 @@ final class TaskDownloadRunner: NSObject, URLSessionDataDelegate, @unchecked Sen
              NSURLErrorDNSLookupFailed,
              NSURLErrorResourceUnavailable,
              NSURLErrorNotConnectedToInternet,
-             NSURLErrorDataNotAllowed:
+             NSURLErrorDataNotAllowed,
+             NSURLErrorSecureConnectionFailed:
             return true
         default:
             return false
