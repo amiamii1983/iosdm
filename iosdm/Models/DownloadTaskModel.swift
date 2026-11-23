@@ -51,6 +51,8 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
     var speedBytesPerSec: Double = 0
     var etaSeconds: Double? = nil
     var pausedByBackground: Bool = false
+    var adaptiveConcurrencyLimit: Int = 0
+    var isAdaptiveThrottled: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -84,7 +86,7 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
         cloudProvider: String? = nil,
         fileName: String,
         savedFileName: String? = nil,
-        requestedThreadCount: Int = 4,
+        requestedThreadCount: Int = 8,
         customHeaders: [String: String] = [:],
         resolvedHeaders: [String: String] = [:],
         proxyModeOverride: ProxyMode? = nil,
@@ -106,7 +108,7 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
         self.cloudProvider = cloudProvider
         self.fileName = fileName
         self.savedFileName = savedFileName
-        self.requestedThreadCount = max(1, min(8, requestedThreadCount))
+        self.requestedThreadCount = max(1, min(16, requestedThreadCount))
         self.customHeaders = customHeaders
         self.resolvedHeaders = resolvedHeaders
         self.proxyModeOverride = proxyModeOverride
@@ -131,7 +133,7 @@ struct DownloadTaskModel: Codable, Identifiable, Equatable, Sendable {
         cloudProvider = try c.decodeIfPresent(String.self, forKey: .cloudProvider)
         fileName = try c.decode(String.self, forKey: .fileName)
         savedFileName = try c.decodeIfPresent(String.self, forKey: .savedFileName)
-        requestedThreadCount = max(1, min(8, try c.decodeIfPresent(Int.self, forKey: .requestedThreadCount) ?? 4))
+        requestedThreadCount = max(1, min(16, try c.decodeIfPresent(Int.self, forKey: .requestedThreadCount) ?? 8))
         customHeaders = try c.decodeIfPresent([String: String].self, forKey: .customHeaders) ?? [:]
         resolvedHeaders = try c.decodeIfPresent([String: String].self, forKey: .resolvedHeaders) ?? [:]
         proxyModeOverride = try c.decodeIfPresent(ProxyMode.self, forKey: .proxyModeOverride)

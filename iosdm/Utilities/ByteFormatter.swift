@@ -3,11 +3,12 @@ import Foundation
 enum ByteFormatter {
     static func formatBytes(_ bytes: Int64) -> String {
         guard bytes >= 0 else { return "未知大小" }
+        // Match Apple iOS / Safari / Files app SI decimal convention (1000-based)
         let units = ["B", "KB", "MB", "GB", "TB"]
         var value = Double(bytes)
         var unitIndex = 0
-        while value >= 1024.0 && unitIndex < units.count - 1 {
-            value /= 1024.0
+        while value >= 1000.0 && unitIndex < units.count - 1 {
+            value /= 1000.0
             unitIndex += 1
         }
         if unitIndex == 0 {

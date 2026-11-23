@@ -8,7 +8,7 @@ struct NewDownloadSheet: View {
 
     @State private var urlText = ""
     @State private var customFileName = ""
-    @State private var threadCount = 4
+    @State private var threadCount = 8
     @State private var startImmediately = true
     @State private var taskProxyChoice: TaskProxyChoice = .followGlobal
 
@@ -133,7 +133,7 @@ struct NewDownloadSheet: View {
                 Section {
                     Picker("下载线程", selection: $threadCount) {
                         ForEach(AppSettings.supportedThreadCounts, id: \.self) { count in
-                            Text(count == 4 ? "4 线程（推荐）" : "\(count) 线程").tag(count)
+                            Text(count == 8 ? "8 线程（推荐）" : (count == 16 ? "16 线程（高速）" : "\(count) 线程")).tag(count)
                         }
                     }
 

@@ -69,7 +69,7 @@ final class DownloadManager: ObservableObject {
         startImmediately: Bool = true
     ) throws -> DownloadTaskModel {
         let validURL = try URLProbe.validateURL(urlString)
-        let threads = max(1, min(8, threadCount ?? settings.defaultThreadCount))
+        let threads = max(1, min(16, threadCount ?? settings.defaultThreadCount))
 
         let trimmedName = customFileName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let initialName: String
@@ -148,6 +148,8 @@ final class DownloadManager: ObservableObject {
         tasks[idx].status = .paused
         tasks[idx].speedBytesPerSec = 0
         tasks[idx].etaSeconds = nil
+        tasks[idx].adaptiveConcurrencyLimit = 0
+        tasks[idx].isAdaptiveThrottled = false
         tasks[idx].pausedByBackground = byBackground
         speedHistory.removeValue(forKey: taskId)
 
@@ -600,6 +602,8 @@ final class DownloadManager: ObservableObject {
         }
         tasks[idx].speedBytesPerSec = 0
         tasks[idx].etaSeconds = nil
+        tasks[idx].adaptiveConcurrencyLimit = 0
+        tasks[idx].isAdaptiveThrottled = false
         speedHistory.removeValue(forKey: taskId)
 
         switch completion {
@@ -759,7 +763,10 @@ final class DownloadManager: ObservableObject {
         for (taskId, runner) in activeRunners {
             guard let idx = tasks.firstIndex(where: { $0.id == taskId }) else { continue }
             let snapshot = runner.snapshotSegments()
+            let runtime = runner.runtimeStatus()
             tasks[idx].segments = snapshot
+            tasks[idx].adaptiveConcurrencyLimit = runtime.activeConcurrencyLimit
+            tasks[idx].isAdaptiveThrottled = runtime.isAdaptiveThrottled
 
             let currentDownloaded = snapshot.reduce(0) { $0 + $1.downloadedBytes }
             aggregateBytes += currentDownloaded

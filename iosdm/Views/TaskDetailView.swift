@@ -276,7 +276,7 @@ struct TaskDetailView: View {
     }
 
     private func segmentsSection(_ task: DownloadTaskModel) -> some View {
-        Section("分片进度（\(task.segments.count) 线程）") {
+        Section(segmentSectionTitle(task)) {
             ForEach(task.segments) { seg in
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
@@ -356,6 +356,16 @@ struct TaskDetailView: View {
                 Label("删除任务", systemImage: "trash")
             }
         }
+    }
+
+    private func segmentSectionTitle(_ task: DownloadTaskModel) -> String {
+        if task.status == .downloading && task.adaptiveConcurrencyLimit > 0 {
+            if task.isAdaptiveThrottled {
+                return "分片进度（智能防限流 \(task.adaptiveConcurrencyLimit)/\(task.requestedThreadCount) 线程）"
+            }
+            return "分片进度（智能并发 \(task.adaptiveConcurrencyLimit)/\(task.requestedThreadCount) 线程）"
+        }
+        return "分片进度（\(task.segments.count) 分片）"
     }
 
     private func pill(_ title: String, color: Color) -> some View {

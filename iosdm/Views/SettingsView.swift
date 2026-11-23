@@ -40,7 +40,7 @@ struct SettingsView: View {
                 Section {
                     Picker("下载加速线程", selection: $settings.defaultThreadCount) {
                         ForEach(AppSettings.supportedThreadCounts, id: \.self) { count in
-                            Text(count == 4 ? "4 线程（推荐）" : "\(count) 线程").tag(count)
+                            Text(count == 8 ? "8 线程（推荐）" : (count == 16 ? "16 线程（高速）" : "\(count) 线程")).tag(count)
                         }
                     }
 

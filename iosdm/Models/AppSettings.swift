@@ -5,7 +5,7 @@ import Combine
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
-    static let supportedThreadCounts = [1, 2, 4, 8]
+    static let supportedThreadCounts = [1, 4, 8, 16]
     static let standardUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
 
     private let defaults: UserDefaults
@@ -38,6 +38,7 @@ final class AppSettings: ObservableObject {
 
     private enum Keys {
         static let defaultThreadCount = "iosdm.defaultThreadCount"
+        static let threadDefaultMigratedV2 = "iosdm.threadDefaultMigratedV2"
         static let maxConcurrentTasks = "iosdm.maxConcurrentTasks"
         static let allowsCellularAccess = "iosdm.allowsCellularAccess"
         static let keepScreenAwake = "iosdm.keepScreenAwake"
@@ -49,7 +50,18 @@ final class AppSettings: ObservableObject {
         self.defaults = defaults
 
         let savedThreads = defaults.integer(forKey: Keys.defaultThreadCount)
-        self.defaultThreadCount = Self.supportedThreadCounts.contains(savedThreads) ? savedThreads : 4
+        let migratedV2 = defaults.bool(forKey: Keys.threadDefaultMigratedV2)
+        if !migratedV2 {
+            defaults.set(true, forKey: Keys.threadDefaultMigratedV2)
+            if savedThreads == 0 || savedThreads == 4 {
+                self.defaultThreadCount = 8
+                defaults.set(8, forKey: Keys.defaultThreadCount)
+            } else {
+                self.defaultThreadCount = Self.supportedThreadCounts.contains(savedThreads) ? savedThreads : 8
+            }
+        } else {
+            self.defaultThreadCount = Self.supportedThreadCounts.contains(savedThreads) ? savedThreads : 8
+        }
 
         let savedConcurrent = defaults.integer(forKey: Keys.maxConcurrentTasks)
         self.maxConcurrentTasks = (1...4).contains(savedConcurrent) ? savedConcurrent : 2
